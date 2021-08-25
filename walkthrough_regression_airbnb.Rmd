@@ -1,0 +1,32 @@
+---
+title: "SLICED Season 1 Episode 5 (Practice)"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(textrecipes)
+library(scales)
+library(stacks)
+theme_set(theme_light())
+doParallel::registerDoParallel(cores = 4)
+```
+
+```{r}
+data_link <- "data/sliced-s01e05-WXx7h8/"
+
+dataset <- read_csv(paste(data_link, "train.csv", sep = '')) %>%
+  mutate(price = log(price + 1))
+holdout <- read_csv(paste(data_link, "test.csv", sep = ''))
+read_csv(paste(data_link, "sample_submission.csv", sep = ''))
+
+set.seed(2021)
+spl <- initial_split(dataset, .75)
+train <- training(spl)
+test <- testing(spl)
+```

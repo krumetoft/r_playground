@@ -1,0 +1,128 @@
+---
+title: "Bayesian Statistics"
+output: html_notebook
+---
+
+This is an intro to the Bayesian Statistics: From Concept to Data Analysis Notes Notebook.
+
+As I always forget the odds definition, remember the die example:
+
+A die has 1/6 / 5/5 = 1/5 odds to roll a '4'. Or P(A)/(1 - P(A)).
+
+In terms of frameworks of probability, think of:
+- Classical - outcomes are equally likely, but difficult when outcomes are not equally likely.
+- Frequentists - hypothetical infinite sequence, relative frequency. If we lose 1/10000 router internet packages, the P(loss) = 1/10000
+- Bayesian - Think Bayesian as personal perspective. Think of bet and at which odds you'd accept it.
+  - Think of a fair coin, you win 3 if it's heads and lose 4 if it's tails. The expected value us 0.5*3 - 0.5*4 - in the long run, you'd lose 0.5 per play. 
+  
+If Chile is 756096 square km big and has 15 regions, think how big do you think region of Atacama to be? Assign probas to the below events
+A1 - less than 10K ~ 0.1
+A2 - 10K-50K ~ 0.2
+A3 - 50K-100K ~ 0.45
+A4 - 100K and more ~ 0.25
+Rethink - Atacama is the fourth largest region.
+Rethink again - The smallest region has an area of 15K squared kms.
+A1 - less than 10K ~ 0
+A2 - 10K-50K ~ 0.1
+A3 - 50K-100K ~ 0.55
+A4 - 100K and more ~ 0.35
+Rethink again - the third largest ergion has an area of 108K squared kms.
+
+A1 - less than 10K ~ 0
+A2 - 10K-50K ~ 0.01
+A3 - 50K-100K ~ 0.60
+A4 - 100K and more ~ 0.39
+
+
+```{r}
+756096/15
+```
+
+Conditional probability - think of two events that are related.
+
+P(A|B) = P(A and B)/P(B)
+
+30 Students
+9 females
+12 CS Majors our of which 4 are females.
+
+So, what is the P(F|CS) = P(F and CS)/P(CS) = 2/15/6/15 = 1/3 - Subsegment of the original probability.
+
+Independence - one event does not depend on one another  P(A|B) = P(A), P(A and B) = P(A)P(B)
+```{r}
+titanic_summary <- tibble(
+  survived = c(203, 118, 178, 212),
+  not_survived = c(122,167,528, 673),
+  class = c("first", "second", "third", "crew")
+)
+
+titanic_summary %>% 
+  group_by(class) %>% 
+  summarise(sum_per_class = survived + not_survived
+            ) %>% 
+  ungroup() %>% 
+  mutate(perc_per_class = sum_per_class/sum(sum_per_class))
+
+titanic_summary %>% 
+  summarise(p = sum(survived)/(sum(survived) + sum(not_survived))
+            )
+
+titanic_summary %>% 
+  filter(class == 'first') %>% 
+  mutate(proba_survived = survived/(survived+not_survived))
+
+titanic_summary %>% 
+  summarise(survived_mean = sum(survived),
+            not_survived_mean = sum(not_survived)
+            ) %>% 
+  rowwise() %>% 
+  summarise(p = survived_mean/not_survived_mean)
+```
+```{r}
+bags <- tibble(
+  color = c('red', 'blue'),
+  A = c(2,3),
+  B = c(5,1),
+  C = c(3,0)
+)
+
+bags %>% 
+  select(B, color) %>% 
+  mutate(proba_b = B/sum(B))
+
+
+runs <- 10_000
+
+sample_col <- function(){
+  bag_selected <- sample(c('A', 'B', 'C'), size=1)
+  bags %>% select(bag_selected, color)
+}
+df_test <- sample_col()
+
+create_marble_vector <- function(df){
+  n_red <- df %>% filter(color == 'red') %>% select(-color) %>% pull()
+  n_blue <- df %>% filter(color == 'blue') %>% select(-color) %>% pull()
+  c(replicate(n_red, 'red'), replicate(n_blue, 'blue'))
+}
+create_marble_vector(df_test)
+test_bag <- create_marble_vector(sample_col())
+sample(test_bag, size=1)
+
+n_runs <- 20000
+mc_results <- replicate(n_runs, sample(create_marble_vector(sample_col()), size=1))
+
+sum(mc_results == 'blue')/n_runs
+
+
+```
+
+```{r}
+3/15 + 1/18
+
+(3/5)/((1/6 + 3/5))
+
+1/(1 + 5/6 + 2/5)
+```
+
+
+
