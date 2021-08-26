@@ -124,5 +124,62 @@ sum(mc_results == 'blue')/n_runs
 1/(1 + 5/6 + 2/5)
 ```
 
+# Distributions:
 
+1. Bernoulli:
+
+P(x=1) = p
+P(x=0) = 1 - p
+PMF = p^x (1-p)^(1-x)
+
+E[X] = p
+Var[X] = p(1-p)
+
+2. Binomial - sum of n independent Bernoullis
+
+P(X = x|p) = (n choose x)p^x (1-p)^(n-x)
+
+(n choose x) = n!/x!(n-x)! - number of Bernoulli sequences that result in x successes out of n trials. 
+E[X] = np
+Var[X] = np(1-p)
+
+
+```{r}
+pbinom(q=0, #Number of successes
+       size = 3, #Number of trials
+       prob = 0.2) #Success probability
+
+pbinom(q = 2,
+       size = 3,
+       prob = 0.2
+       )
+```
+
+3. Uniform distribution
+X ~ U[0,1]
+PDF = f(x) 1 if x in [0,1] else 0 = I {0<=x<=1} (x)
+
+P(0<x,1/2) = Integral of PDF from 0 to 1/2
+Be careful P(x = 1/2) = )
+
+It will be always true that Integral from -inf to inf = 1, and that density is >= 0
+
+4. Exponential distribution:
+
+X ~ Exp(lambda) - weighting time between events (waiting for a bus)
+f(x|lambda) = lambda e ^-lambdax
+E[X] = 1/lambda 
+Var(X) = 1/lambda^2
+
+5. Normal 
+
+X ~ N(m, sigma^2)
+
+
+
+```{r}
+pexp(q = 1/3, rate = 3)
+
+expec
+```
 
