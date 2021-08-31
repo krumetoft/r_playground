@@ -1,0 +1,70 @@
+---
+title: "Variability"
+output: html_notebook
+---
+
+# Variability
+
+## Variance
+
+Handy:
+
+Var(X) = E[X^2] - E[X]^2
+
+Think of variance of the variance itself and its going slimmer and slimmer with sample size. 
+
+Var(Xhat) = sigma^2/n - variance of the sample mean decreases to zero as the sample increases.
+The above is the standard error of a mean - variability of mean. 
+
+
+S - the standard deviation, talks about how variable the population is.
+S/sqrt(n) - the standard error, talks about how variable averages of random samples of size n from the population are.
+
+BOth of the above, of the mean - SD of the mean, SE of the mean
+
+```{r}
+nosim <- 1000
+n <- 10
+
+sd(apply(matrix(rnorm(nosim * n), nosim), 1, mean))
+
+print(1/sqrt(10)) # normal distribution with S - 1
+```
+
+```{r}
+nosim <- 1000
+n <- 10
+
+sd(apply(matrix(rpois(nosim * n, 4), nosim), 1, mean))
+
+print(2/sqrt(n)) #pois
+```
+
+```{r}
+nosim <- 1000
+n <- 10
+
+sd(apply(matrix(sample(0:1, nosim*n, replace = T), nosim),1 , mean))
+
+print(1/(2*sqrt(n))) #Coin flips
+```
+
+```{r}
+library(UsingR)
+data(father.son)
+
+x <- father.son$sheight
+n <- length(x)
+
+hist(x, prob = T)
+lines(density(x))
+```
+```{r}
+round(c(
+  variance_sample = var(x), #estimates of the population, if random sample
+  variance_averages_10_children_heights = var(x)/n, #variance of sample mean
+  st_dev_sample = sd(x), #estimates of the population, if random sample
+  st_dev_averages_10_children_heights = sd(x)/sqrt(n) #Standard Error 
+),2)
+```
+
