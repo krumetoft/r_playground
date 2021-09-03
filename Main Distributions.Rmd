@@ -1,0 +1,89 @@
+---
+title: "Distributions"
+output: html_notebook
+---
+
+## Bernoulli distribution
+
+Binary outcomes - coins, biased coins, etc...
+
+Mean = p
+Var = p(1-p)
+
+## Binomial 
+
+N times Bernoulli - Sum of a Bernoulli
+
+(n choose x) stuff
+
+Suppose a friend has 8 children, 7 of which are girls. 
+If each gender has an independent 0.5 probability for each birth, what's the probability of getting 7 or more girls out of 8 births?
+
+```{r}
+choose(8,7)*0.5^8 + choose(8,8)*0.5^8 #Proba of 7 + Proba of 8
+
+pbinom(6, size = 8, prob = .5, lower.tail = F)
+```
+
+## Normal
+
+X ~ N(m, sigma^2)
+
+- the standard normal distribution - m = 0, std.dev = 1
+- all not-standard calculations rever to a standard normal one.
+
+For example, for standard normal 1.28 is 90th quantile. For non-standard, you need m + 1.28*st.d
+
+
+```{r}
+qnorm(0.95) #95th percentile, for different normal mean = mu, sd = sd
+#m + sd*1.645
+
+#What is the probability that a N(m, sigma^2) RV is larger than x
+#pnorm(x, mean = m, st.dev = sigma, lower.tail = F)
+
+#Alternatively, convert (X - m)/st.dev
+
+#m = 1020, st.dev = 50. Whats the proba of getting more than 1160 clicks.
+
+(1160 - 1020)/50 #2.8 stdev from the mean, so expect below 1%
+pnorm(1160, mean = 1020, sd = 50, lower.tail = F)
+#Same as the below
+1 - pnorm(1160, mean = 1020, sd = 50)
+
+#Same as above, what x is 75% of days have fewer clicks 
+#Intuition - 0.5 + 1sd should be around 0.84, so i'd expect around 1060 (1020 + a bit less than 50)
+qnorm(0.75, mean = 1020, sd = 50)
+
+
+```
+
+## Poisson distribution
+
+Model counts - can't go below zero
+Model event-time or survival data
+Model contingency tables (think hair color by race)
+Approximating binomials when n is large and p is small - Think Air polutions, and respiratory 
+Big city, small respiratory
+
+Lambda = is the expected count per unit of time
+t is the total monitor of time.
+
+Mean = Var = Lambda - 
+
+The number of people that show up at a bus stop is Poisson with a mean of 2.5 per hour.
+If watching the bus stop for 4 hours, what is the probability that 3 or fewer people show up for the whole time?
+
+```{r}
+ppois(3, lambda = 2.5*4) #Note 2.5 times 4 hours
+```
+
+### Poisson approximation of the binomial.
+
+We flip a coin with success proba of 0.01 500 times. What's the probability of 2 or fewer successes?
+```{r}
+pbinom(2, size = 500, prob = 0.01)
+ppois(2, lambda = 500*0.01)
+
+```
+

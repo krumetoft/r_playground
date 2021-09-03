@@ -1,0 +1,131 @@
+---
+title: "Asymptotics"
+output: html_notebook
+---
+
+## Asymptotics and LLN
+
+Asymptotics is the term for the behavior of statistics as the sample size (or some other relevant quantity) limits to infinity (or some other relevant number)
+
+### Law of Large Numbers 
+
+```{r}
+n <- 1000
+
+#Normal
+means <- cumsum(rnorm(n))/1:n #cummulative means
+plot(means)
+
+#Binomial
+means <- cumsum(sample(0:1, n, replace = T))/(1:n)
+plot(means)
+```
+
+## Asymptotics and the CLT
+
+The CLT states that the distribution of averages of iid variables (properly normalized) becomes that of a standard normal as **the sample size** increases.
+
+Die roles
+m = 3.5, Var = 2.92, SE = sqrt(var/n) = 1.71/sqrt(n)
+lets roll n dice, take their mean, subtract off 3.5 (center around zero) and divide by 1.71/sqrt(n)
+
+Coin CLT
+E = p, Var = p(1-p), SE = sqrt(p(1-p)/n)
+Again, take sample mean, subtract mean, and divide by SE
+
+If the coin is not biased, convergence to normal is fast, but for p = 0.9, you need a larger sample
+
+
+## Asymptotics and confidence intervals
+
+Xhat +- 2 SE(sigma/sqrt(n)) is called a 95% interval for m
+
+```{r}
+library(UsingR)
+data(father.son)
+
+x <- father.son$sheight
+(mean(x) + c(-1,1)*qnorm(0.975)*sd(x)/sqrt(length(x)))/12 #12 is because of inch/, all after qnorm is se
+
+```
+
+Your campaign advisor told you that in a random sample of 100 likely voters, 56 intent to vote for you. 
+- Can you relax? Do you have this race in the bag?
+- Without access to a computer or calculator, how precise is this estimate?
+
+1/sqrt(100) = 0.1 - back of the envelope calculation gives an approximate 95% interval of (0.46, 0.66)
+- Not enough for you to relax, better go do more campaigning!
+
+Rough guidelines, 100 for 1 decimal place, 10_000 for 2, 1_000_000 for 3.
+
+```{r}
+round(1/sqrt(10^(1:6)), 3)
+
+0.56 + c(-1,1) * qnorm(0.975)*sqrt(0.56 * 0.44/100)
+binom.test(56, 100)$conf.int #56 successes out of 100 trials, 95% conf intervals or higher
+```
+
+```{r}
+n <- 20
+pvals <- seq(0.1, 0.9, by = 0.05)
+nosim <- 1000
+
+#sample size 20, 1000 draws, different proba
+coverage <- sapply(pvals, function(p){
+  phats <- rbinom(nosim, prob = p, size =n )/n
+  il <- phats - qnorm(0.975)*sqrt(phats*(1-phats)/n)
+  ul <- phats + qnorm(0.975)*sqrt(phats*(1-phats)/n)
+  mean(il < p & ul > p)
+})
+
+plot(coverage, type='line')
+
+n <- 20
+pvals <- seq(0.1, 0.9, by = 0.05)
+nosim <- 1000
+
+#Adding 2 successes and 2 failures (2 out of 4)
+coverage <- sapply(pvals, function(p){
+  phats <- (2 + rbinom(nosim, prob = p, size =n ))/(n + 4)
+  il <- phats - qnorm(0.975)*sqrt(phats*(1-phats)/n)
+  ul <- phats + qnorm(0.975)*sqrt(phats*(1-phats)/n)
+  mean(il < p & ul > p)
+})
+
+plot(coverage, type='line')
+```
+
+Why is the CLT Wald Intervals not so good at small probabilities? Remember that for smaller probas, the CLT needs bigger sample to work. Repeat with 100 instead of 20.
+
+Quick fix, form the interval with X+2/n+4 -> **Agresti/Couli interval - add two successes and failures**
+
+### Poisson interval
+
+A nuclear pump failed 5 times out of 94.32 days, give a 95% confidence interval for the failure rate.
+X ~ Poisson(lambda t)
+
+```{r}
+x <- 5
+t <- 94.32
+lambda <- x/t
+round(lambda + c(-1, 1)*qnorm(0.975)*sqrt(lambda/t), 3)
+
+# A bit conservative
+poisson.test(x, T = 94.32)$conf
+
+lambdavals <- seq(0.005, 0.1, by = 0.01)
+nosim <- 1000
+t <- 100
+
+coverage <- sapply(lambdavals, function(p){
+  lhats <- rpois(nosim, lambda = lambda*t)/t
+  il <- lhats - qnorm(0.975)*sqrt(lhats/t)
+  ul <- lhats + qnorm(0.975)*sqrt(lhats/t)
+  mean(il < p & ul > p)
+})
+
+plot(coverage, type='line')
+
+
+```
+
