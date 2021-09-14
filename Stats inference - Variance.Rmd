@@ -7,20 +7,51 @@ output: html_notebook
 
 ## Variance
 
-Handy:
+The variance of a random variable, as a measure of spread or dispersion, is, like a mean, defined as an expected value. It is the expected squared
+| distance of the variable from its mean. Squaring the distance makes it positive so values less than and greater than the mean are treated the
+| same. In mathematical terms, if X comes from a population with mean mu, then 
 
-Var(X) = E[X^2] - E[X]^2
+Finally, it's easy to show from the definition and the linearity of expectations that, if a is a constant, then Var(aX)=a^2*Var(X). 
+
+Var(X) = E( (X-mu)^2 ) = E( (X-E(X))^2 ) = E(X^2)-E(X)^2
+
+Because it is often more useful to use measurements in the same units as X we
+| define the standard deviation of X as the square root of Var(X).
 
 Think of variance of the variance itself and its going slimmer and slimmer with sample size. 
 
+if the population is infinite, the variance of the sample mean is the population variance divided by the sample size.
+| Specifically, Var(X') = sigma^2 / n.
+
 Var(Xhat) = sigma^2/n - variance of the sample mean decreases to zero as the sample increases.
+
+| Just as we distinguished between a population mean and a sample mean we have to distinguish between a population variance sigma^2 and a sample
+| variance s^2. They are defined similarly but with a slight difference. The sample variance is defined as the sum of n squared distances from the
+| sample mean divided by (n-1), where n is the number of samples or observations. We divide by n-1 because this is the number of degrees of freedom
+| in the system. The first n-1 samples or observations are independent given the mean. The last one isn't independent since it can be calculated
+| from the sample mean used in the formula.
+| In other words, the sample variance is ALMOST the average squared deviation from the sample mean.
+
 The above is the standard error of a mean - variability of mean. 
 
+The standard deviation of a statistic is called its standard error, so the standard error of the sample mean is the square root of its variance.
 
 S - the standard deviation, talks about how variable the population is.
 S/sqrt(n) - the standard error, talks about how variable averages of random samples of size n from the population are.
 
+| The sample standard deviation, s, tells us how variable the population is, and s/sqrt(n), the standard error, tells us how much averages of random
+| samples of size n from the population vary.
+
 BOth of the above, of the mean - SD of the mean, SE of the mean
+
+Chebyshev's inequality helps interpret variances. It states that the probability that a random variable X
+| is at least k standard deviations from its mean is less than 1/(k^2). In other words, the probability that X is at least 2 standard deviations
+| from the mean is less than 1/4, 3 standard deviations 1/9, 4 standard deviations 1/16, etc.
+
+| However this estimate is quite conservative for random variables that are normally distributed, that is, with bell-curve distributions. In these
+| cases, the probability of being at least 2 standard deviations from the mean is about 5% (as compared to Chebyshev's upper bound of 25%) and the
+| probability of being at least 3 standard deviations from the mean is roughly .2%.
+
 
 ```{r}
 nosim <- 1000

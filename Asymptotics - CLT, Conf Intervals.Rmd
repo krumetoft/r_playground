@@ -9,6 +9,10 @@ Asymptotics is the term for the behavior of statistics as the sample size (or so
 
 ### Law of Large Numbers 
 
+'properly normalized' means that you transformed the sample mean X'. You subtracted the population
+| mean mu from it and divided the difference by sigma/sqrt(n). Here sigma is the standard deviation of the population and n is the sample size.
+Second, the CLT says that for large n, this normalized variable, (X'-mu)/(sigma/sqrt(n)) is almost normally distributed with mean 0 and variance
+
 ```{r}
 n <- 1000
 
