@@ -119,4 +119,21 @@ temp <- rbind(x, p)
 rownames(temp) <- c("X", "Prob")
 temp
 ```
+Hospital, 400 patients admitted over a month for heart attacks. A month later, 72 dead, 328 survived.
+
+Disregarding sampling issues:
+Y ~ Bernoulli(theta)
+P(Yi=1) = theta
+PDF = P(Y =y|theta) = P(Y1 = y1, Y2 = y2 ....|theta) = 
+= P(Y1 = y1)*... = Produt(P(Yi  = yi|that)) = Product theta^yi*(1-theta)^(1-y)
+
+Likelihood = L(theta|y) - difference to the above - the inverse of PDF. Function of theta, given Y. 
+MLE - Choose theta that gives the largest likelihood for Y. Makes the data most likely to occur, given the data we have.
+In practice, the log likelihood is easier to maximize. (when we maximize the log, we maximize the original function).
+
+CLT can give us an approximate confidence interval - theta_hat +- 1.96*sqrt(theta_hat(1-theta_hat)/n)
+```{r}
+
+
+```
 
