@@ -1,0 +1,59 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+set.seed(1908)
+N <- 200 # number of pairs
+U <- rnorm(N) # simulate confounds
+# birth order and family sizes
+B1 <- rbinom(N,size=1,prob=0.5) # 50% first borns
+M <- rnorm( N , 2*B1 + U )
+B2 <- rbinom(N,size=1,prob=0.5)
+D <- rnorm( N , 2*B2 + U + 0*M ) # change the 0 to turn on causal influence of mom
+```
+
+```{r}
+
+# fit the two regression models
+summary( lm( D ~ M ) )
+summary( lm( D ~ M + B1 + B2 ) )
+
+# compare the models with AIC
+AIC( lm( D ~ M ) )
+AIC( lm( D ~ M + B1 + B2 ) )
+
+cov( B1 , M ) / var( B1 )
+summary( lm( M ~ B1 ) )
+```
+
+```{r bootstrapping simulation of causal effect}
+set.seed(1908)
+N <- 500 # number of pairs
+Causal_Effect <- 0
+U <- rnorm(N,0,1) # simulate confounds
+# birth order and family sizes
+B1 <- rbinom(N,size=1,prob=0.5) # 50% first borns
+M <- rnorm( N , 2*B1 + U )
+B2 <- rbinom(N,size=1,prob=0.5)
+D <- rnorm( N , 2*B2 + U + Causal_Effect*M )
+
+f <- function(data,indices) with(data[indices,], cov(B1,D) / cov(B1,M) )
+dat <- data.frame(M=M,D=D,B1=B1,B2=B2)
+library(boot)
+boot( data=dat , statistic=f , R=1e4 )
+
+#Traditional approach
+summary( lm( D ~ M + B1 + B2 ) )
+
+cov(B1, M)
+```
+
+```{r}
+comp_1 <- rnorm(5000)
+comp_2 <- 13*comp_1
+
+cov(comp_2,comp_1)
+```
+

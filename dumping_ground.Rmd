@@ -1,0 +1,1454 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+---
+title: "B2B LTV - External Data EDA - NEW DATA"
+params:
+  end_date:
+    input: date
+    label: initial date up to which training data is gathered
+    value: !r Sys.Date() - 7
+  min_days:
+    input: numeric
+    label: Minimum number of days to look back for training data
+    value: 0
+  max_days:
+    input: numeric
+    label: Maximum number of days to look back for training data
+    value: 90
+  day_samples:
+    input: numeric
+    label: Number of training data samples to take 
+    value: 3
+  upsample_licences:
+    value: TRUE
+    input: logical
+    label: NOT USED IN THIS ITERATION Should the script upsample less common licence types
+  upsample_products:
+    value: FALSE
+    input: logical
+    label: NOT USED IN THIS ITERATION Should the script upsample less common products
+  upsample_size:
+    value: FALSE
+    input: logical
+    label: NOT USED IN THIS ITERATION Should the script upsample bigger contracts to smaller ones
+  live_flag:
+    label: Should the script write outputs to GCS and BigQuery
+    value: FALSE
+    input: select
+    choices: [FALSE, TRUE]
+  train_proportion:
+    input: numeric
+    label: The proportion of distinct users to be used as train data
+    value: 0.8
+  save_eda_data:
+    value: TRUE
+    input: logical
+    label: Should the script save the data used as a csv.
+output: html_notebook
+editor_options:
+  chunk_output_type: console
+---
+
+```{r libraries functions and constants}
+library(ftbbqr)
+library(dplyr)
+library(ftb2bltv)   
+# library(caret)
+library(lubridate)
+library(broom)
+library(googlesheets4)
+library(skimr)
+library(ggplot2)
+library(tidymodels)
+library(forcats)
+library(patchwork)
+library(DALEXtra) #Model interpretability, ended up not using it
+library(glmnet)
+library(corrr)
+
+library(rstanarm) # Probabilistic Modelling
+library(bayestestR)
+library(insight) 
+library(performance) # Tidy Model Assessment
+library(rcompanion) # For Cramer's V
+library(stringr)
+library(patchwork)
+
+#devtools::load_all()
+
+# Below function replaces ftb2bltv::logit_training_data
+logit_training_data_new <- function(connection, end_date, look_back_days) {
+  #' Function to collect training data for multiple dates
+  #'
+  #' @param connection a big query connection
+  #' @param end_date end date for training data period
+  #' @param look_back_days an integer list of days to subtract from end date
+  #' @export
+
+  look_back_dates <- end_date - look_back_days
+  look_back_dates %>%
+    purrr::map_dfr(~ contracts_data_formatted(connection = connection,
+                                              run_date = .x) %>%
+                     mutate(latest_extension_id = NA) %>%
+                     add_engaged_users(connection, .x))
+}
+
+
+# A function to read from a Google sheets 
+read_from_google_sheets <- function(link_to_file, sheet){
+   googlesheets4::gs4_auth(
+    scopes = "https://www.googleapis.com/auth/spreadsheets.readonly")
+   result <- googlesheets4::read_sheet(link_to_file, sheet = sheet )
+   return(result)
+}
+
+read_from_google_drive <- function(link_to_file, sheet){
+  googledrive::drive_auth()
+  data_tempfile <- tempfile(pattern = 'ext_data-', fileext = ".xlsx")
+  googledrive::drive_download(file = link_to_file,
+                            path = data_tempfile,
+                            overwrite = T
+                            )
+  result <- readxl::read_excel(data_tempfile, sheet = sheet)
+  file.remove(data_tempfile)
+  return(result)
+}
+
+eq <- function(x,y) {
+  m <- lm(y ~ x)
+  as.character(
+    as.expression(
+      substitute(italic(y) == a + b %.% italic(x)*","~~italic(r)^2~"="~r2,
+                list(a = format(coef(m)[1], digits = 4),
+                b = format(coef(m)[2], digits = 4),
+                r2 = format(summary(m)$r.squared, digits = 3)))
+    )
+  )
+}
+
+connection <- ftdata_connection(billing = "ft-data-science")
+options(scipen=20)
+
+ext_data_summary_link <- "https://docs.google.com/spreadsheets/d/1MZ88VNxpLA_lj33Mzs15Jgw0P_iFmeLmF3W9BmHoKQE/"
+sheet_to_read <- "DRS-104904-40843-final"
+
+new_data_summary_link <- "https://docs.google.com/spreadsheets/d/1yzpxzz0WIcPWvyjwql1sbNYyjEYrvuOK/"
+new_sheet_to_read <- "Result_Final"
+
+set.seed(123)
+
+
+test_sheet <- "https://docs.google.com/spreadsheets/d/1iYqJw1ZgaVoZSKE9rvCL36ppKmveWqCyqPHoOiJVmQs/"
+test_excel <- "https://docs.google.com/spreadsheets/d/1HrzuNNg8WoBFz_Maxw5qCR9q8GcTgdME"
+
+read_from_google_drive(link_to_file = test_excel, sheet = 'Sheet1')
+
+```
+
+```{r read the external data and clean the column names}
+
+
+
+ext_data_summary_new <- read_from_google_drive(new_data_summary_link, new_sheet_to_read) %>% 
+    janitor::clean_names() #Converting column names, otherwise difficult to use dplyr
+
+ext_data_summary_old <- read_from_google_sheets(ext_data_summary_link, sheet_to_read) %>% 
+  janitor::clean_names() #Converting column names, otherwise difficult to use dplyr 
+
+```
+
+```{r data pull}
+sample_days <- seq(from = params$min_days,
+                   to = params$max_days,
+                   length.out = params$day_samples) %>% #This controls the number of time points to get data
+  round(digits = 0) %>%
+  unique()
+
+sample_days # results in a list of three time cuts [0, 45, 90]
+
+# Pull data using the new version of the function, provided by Grace
+contracts_data <- logit_training_data_new(connection = connection,
+                                      end_date = as.Date(params$end_date),
+                                      look_back_days = sample_days) 
+
+#Saving data used for this version of the eda to github
+if (params$save_eda_data) {
+  run_year <- format(Sys.Date(), format = "%Y")
+  run_month <- format(Sys.Date(), format = "%m")
+  run_day <- format(Sys.Date(), format = "%d")
+  file_name <- stringr::str_interp("notebooks/data_eda/contracts_data_${run_year}_${run_month}_${run_day}.csv")
+  
+  contracts_data %>% 
+    readr::write_csv(file_name)
+}
+```
+
+
+```{r transformation for modelling, following train_ notebooks}
+growth_data <- growth_model_data_format(contracts_data) 
+growth_data <- growth_data %>% filter(contract_start_date >= as.Date('2018-01-01'))
+
+attrition_data <- attrition_model_data_format(contracts_data)
+attrition_data <- attrition_data %>% filter(contract_start_date >= as.Date('2018-01-01'))
+```
+
+```{r}
+growth_data %>% 
+  count(account_id, sort=T) 
+n_distinct(growth_data$account_id)
+dim(growth_data)
+
+read_csv("notebooks/data_eda/contracts_data_2021_09_13.csv") %>% 
+  growth_model_data_format() %>% 
+  count(account_id, sort = T)
+
+growth_data %>% 
+  count(contract_id, sort=T)
+ext_data_summary_old %>% 
+  count()
+
+ext_data_summary_old %>% 
+  dplyr::distinct(across(c(account_id, licencee_name, billing_street, vat_number, business_name, annual_sales_local,employees_here, out_of_business_indicator)),
+                  .keep_all = T) %>% 
+  dim()
+
+ext_data_summary_new %>% 
+  dplyr::distinct(across(c(account_id, licencee_name, billing_street, vat_number, business_name, annual_sales_local,employees_here, out_of_business_indicator)),
+                  .keep_all = T) %>% 
+  dim()
+
+ext_data_summary_new %>% 
+  dplyr::distinct(across(c(x18_character_id, gc_emps, gu_emps, gc_sales, gu_sales)),
+                  .keep_all = T) %>% 
+  dim()
+
+names(ext_data_summary_new)
+```
+
+
+```{r merge external data}
+
+external_features_to_pull <- c("account_id_external", "employees_total_external", "annual_sales_in_us_dollars_external",
+                     "out_of_business_indicator_external" 
+                     ,"annual_sales_indicator_external", "employees_total_indicator_external",
+                     "contract_id_15_external", 'x18_character_id_external'
+                     )
+
+growth_data_merged <- 
+  growth_data %>% 
+  mutate(account_id_short = stringr::str_sub(account_id, start = 1, end=-4),
+         contract_id_short = stringr::str_sub(contract_id, start = 1, end=-4),
+         ) %>% # Removing last 3 characters
+  left_join(ext_data_summary_old %>% 
+              dplyr::distinct(across(c(account_id, licencee_name, billing_street, vat_number,
+                                       business_name,annual_sales_local,employees_here,out_of_business_indicator)),.keep_all = T) %>%
+              rename_all(paste0, '_external') %>% # Adding a suffix to the external features, so that they are easier to spot
+              select(any_of(external_features_to_pull)),
+            by=c("account_id_short" = "account_id_external")) %>%
+  left_join(ext_data_summary_new %>%
+              dplyr::distinct(across(c(x18_character_id, gc_emps, gu_emps, gc_sales, gu_sales)),.keep_all = T) %>% 
+              rename(employees_total = gu_emps,
+                     annual_sales_in_us_dollars = gu_sales
+                     ) %>%
+              rename_all(paste0, '_external') %>% # Adding a suffix to the external features, so that they are easier to spot
+              select(any_of(external_features_to_pull)),
+            by=c("account_id" = "x18_character_id_external"),
+            suffix = c("", "_new")) %>% 
+  filter(!is.na(next_core_readers)) %>% # following the train notebook
+  mutate(id_sort = row_number()) # following the train notebook
+
+skim(growth_data_merged)
+```
+
+
+```{r}
+growth_data_merged_trimmed <- 
+  growth_data_merged %>% 
+  dplyr::distinct(across(c(account_name, account_id, client_type, licence_type, 
+                         product, contract_start_date, contract_end_date, contract_id,
+                         value, next_core_readers, core_readers, total_core_readers, num_prev_renewals,
+                         renewed, employees_total_external, employees_total_external_new)),
+                  .keep_all = T)
+```
+
+```{r}
+growth_data_merged_trimmed %>% 
+  keep(is.numeric) %>% 
+  correlate() %>% 
+  rplot(print_cor = T) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.title = element_text(size = 12)) +
+  labs(title = "Growth Model Numeric Features Correlation Matrix (Pearson's)")
+```
+
+```{r}
+growth_data_merged_trimmed %>% 
+  select(licence_type, product, opportunity_region, sector, is_small_contract, 
+         out_of_business_indicator_external, out_of_business_indicator_external_new) %>% 
+  colpair_map(cramerV) %>% 
+  rplot(print_cor = T) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1), plot.title = element_text(size = 12)) +
+  labs(title = "Growth Model Categorical Features Correlation Matrix (Cramer's V)")
+
+```
+
+Out of business is generally the same
+
+```{r}
+growth_data_merged_trimmed %>% 
+  mutate(out_of_business_equal = out_of_business_indicator_external == out_of_business_indicator_external_new) %>% 
+  count(out_of_business_equal) %>% 
+  mutate(n = n/sum(n))
+```
+
+Total employees - the new data seem to generally have more employees than the old one.
+
+```{r}
+growth_data_merged_trimmed %>% 
+  mutate(total_employees_comp = dplyr::case_when(employees_total_external == employees_total_external_new ~ "same",
+                                                 employees_total_external > employees_total_external_new ~ "old_emp_more",
+                                                 employees_total_external < employees_total_external_new ~ "new_emp_more",
+                                                 TRUE ~ "not available"
+                                                 )) %>% 
+  count(total_employees_comp, sort= T) %>% 
+  mutate(in_perc = n/sum(n))
+```
+
+Similarly, the new data for total sales has generally higher values than the old one.
+
+```{r}
+growth_data_merged_trimmed %>% 
+  mutate(total_sales_comp = dplyr::case_when(annual_sales_in_us_dollars_external == annual_sales_in_us_dollars_external_new ~ "same",
+                                                 annual_sales_in_us_dollars_external > annual_sales_in_us_dollars_external_new ~ "old_sales_more",
+                                                 annual_sales_in_us_dollars_external < annual_sales_in_us_dollars_external_new ~ "new_sales_more",
+                                                 TRUE ~ "not available"
+                                                 )) %>% 
+  count(total_sales_comp, sort= T) %>% 
+  mutate(in_perc = n/sum(n))
+```
+
+
+## Number of employees further analysis:
+  - The percentage of "dubious" data - more readers than employees, has dropped from 22.4% with the old dataset to 3.2% with the new version.
+  - Unfortunately, the new dataset has available data for fewer accounts - the percentage of NA rises to 20% from 5%
+  - Higher NAs might be a reason why the data is better.
+
+```{r}
+growth_data_merged_trimmed %>% 
+  mutate(more_readers_than_employees = total_core_readers > employees_total_external,
+         equal_to_employees = total_core_readers == employees_total_external
+         ) %>% 
+  count(more_readers_than_employees, equal_to_employees, name = 'n_accounts', sort = T) %>% 
+  mutate(in_perc = round(100*n_accounts/sum(n_accounts), 2))
+
+growth_data_merged_trimmed %>% 
+  mutate(more_readers_than_employees_new = total_core_readers > employees_total_external_new,
+         equal_to_employees_new = total_core_readers == employees_total_external_new
+         ) %>% 
+  count(more_readers_than_employees_new, equal_to_employees_new, name = 'n_accounts', sort = T) %>% 
+  mutate(in_perc = round(100*n_accounts/sum(n_accounts), 2))
+```
+
+
+Values from which indicator categories are missing?
+
+```{r}
+growth_data_merged_trimmed %>% 
+  mutate(more_readers_than_employees = total_core_readers > employees_total_external,
+         reliability_category = dplyr::case_when(
+           employees_total_indicator_external == 0 ~ "0 actual",
+           employees_total_indicator_external == 1 ~ "1 low end of range",
+           employees_total_indicator_external == 2 ~ "2 estimated or modeled (US records)",
+           employees_total_indicator_external == 3 ~ "3 modeled (non US)",
+           TRUE ~ "Not available")) %>% 
+  group_by(reliability_category) %>% 
+  summarize(
+    number_accounts_version_1 = n_complete(employees_total_external),
+    number_accounts_version_2 = n_complete(employees_total_external_new),
+    delta = number_accounts_version_1 - number_accounts_version_2,
+    delta_in_perc = delta/number_accounts_version_1
+  )
+```
+
+Most of the data is missing from the two categories that had the poorest data quality in V1
+
+ reliability_category                number_accounts_version_1 number_accounts_version_2 delta delta_in_perc
+  <chr>                                                   <int>                     <int> <int>         <dbl>
+1 0 actual                                                 4006                      3424   582        0.145 
+2 1 low end of range                                         11                        10     1        0.0909
+3 2 estimated or modeled (US records)                      6444                      5394  1050        0.163 
+4 3 modeled (non US)                                        974                       663   311        0.319 
+5 Not available                                             126                       135    -9       -0.0714
+
+```{r}
+#Core readers vs. employees total histogram
+old_employees_readers_plot <- 
+  growth_data_merged_trimmed %>% 
+  ggplot(aes(x=employees_total_external, y = total_core_readers)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method = "gam") + #
+  geom_smooth(method = 'lm', colour = 'red') +
+  geom_abline(intercept = 0, slope = 1, color = 'black', linetype = 2) + 
+  labs(title = "First version Total Employees vs. Total Core Readers, logarithmic scale", 
+       subtitle = "Accounts above the dashed line have more readers than employees"
+       )
+
+new_employees_readers_plot <- 
+  growth_data_merged_trimmed %>% 
+  ggplot(aes(x=employees_total_external_new, y = total_core_readers)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method = "gam") + #
+  geom_smooth(method = 'lm', colour = 'red') +
+  geom_abline(intercept = 0, slope = 1, color = 'black', linetype = 2) + 
+  labs(title = "Second Version Total Employees vs. Total Core Readers, logarithmic scale", 
+       subtitle = "Accounts above the dashed line have more readers than employees"
+       )
+
+old_employees_readers_plot + new_employees_readers_plot
+```
+
+
+```{r}
+#Core readers vs. employees total histogram
+growth_data_merged_trimmed %>% 
+  mutate(more_readers_than_employees = total_core_readers > employees_total_external,
+         reliability_category = dplyr::case_when(
+           employees_total_indicator_external == 0 ~ "actual",
+           employees_total_indicator_external == 1 ~ "low end of range",
+           employees_total_indicator_external == 2 ~ "estimated or modeled (US records)",
+           employees_total_indicator_external == 3 ~ "modeled (non US)",
+           TRUE ~ "Not available")) %>% 
+  ggplot(aes(x=employees_total_external, y = total_core_readers)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method = "loess") + #
+  geom_smooth(method = 'lm', colour = 'red') +
+  geom_abline(intercept = 0, slope = 1, color = 'black', linetype = 2) + 
+  facet_wrap(~reliability_category, nrow = 3) +
+  labs(title = "Total Employees vs. Total Core Readers by data source, logarithmic scale", 
+       subtitle = "Accounts above the dashed line have more readers than employees"
+       )
+
+#Core readers vs. employees total histogram
+growth_data_merged_trimmed %>% 
+  mutate(more_readers_than_employees = total_core_readers > employees_total_external,
+         reliability_category = dplyr::case_when(
+           employees_total_indicator_external == 0 ~ "actual",
+           employees_total_indicator_external == 1 ~ "low end of range",
+           employees_total_indicator_external == 2 ~ "estimated or modeled (US records)",
+           employees_total_indicator_external == 3 ~ "modeled (non US)",
+           TRUE ~ "Not available")) %>% 
+  ggplot(aes(x=employees_here_external, y = total_core_readers)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method = "loess") + #
+  geom_smooth(method = 'lm', colour = 'red') +
+  geom_abline(intercept = 0, slope = 1, color = 'black', linetype = 2) + 
+  facet_wrap(~reliability_category, nrow = 3) +
+  labs(title = "Local Employees vs. Total Core Readers by data source, logarithmic scale", 
+       subtitle = "Accounts above the dashed line have more readers than employees"
+       )
+```
+
+```{r}
+#capped at total_core_readers
+old_employees_abs_growth <-
+  growth_data_merged_trimmed %>% 
+  mutate(employees_total_external = case_when(employees_total_external < total_core_readers ~ total_core_readers,
+                                              TRUE ~ employees_total_external
+     )) %>% 
+  ggplot(aes(x=employees_total_external, y = next_ccr_growth_abs)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method = "gam") +
+  geom_smooth(method = 'lm', colour = 'red') +
+  labs(title = " First Version Total Employees (Min. capped at total core readers) vs. Next CCR Absolute Growth, logarithmic scale")
+
+#capped at total_core_readers
+new_employees_abs_growth <-
+  growth_data_merged_trimmed %>% 
+  mutate(employees_total_external_new = case_when(employees_total_external_new < total_core_readers ~ total_core_readers,
+                                              TRUE ~ employees_total_external_new
+     )) %>% 
+  ggplot(aes(x=employees_total_external_new, y = next_ccr_growth_abs)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method = "gam") +
+  geom_smooth(method = 'lm', colour = 'red') +
+  labs(title = " First Version Total Employees (Min. capped at total core readers) vs. Next CCR Absolute Growth, logarithmic scale")
+
+old_employees_abs_growth + new_employees_abs_growth
+```
+
+```{r}
+#capped at total_core_readers
+old_employees_perc_growth <-
+  growth_data_merged_trimmed %>% 
+  mutate(employees_total_external = case_when(employees_total_external < total_core_readers ~ total_core_readers,
+                                              TRUE ~ employees_total_external
+     ),
+     next_ccr_growth_rate = pmin(next_ccr_growth_rate, 3)) %>% 
+  ggplot(aes(x=employees_total_external, y = next_ccr_growth_rate)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  geom_smooth(method = "gam") +
+  geom_smooth(method = 'lm', colour = 'red') +
+  labs(title = " First Version Total Employees (Min. capped at total core readers) vs. Next CCR Absolute Growth, logarithmic scale")
+
+#capped at total_core_readers
+new_employees_perc_growth <-
+  growth_data_merged_trimmed %>% 
+  mutate(employees_total_external_new = case_when(employees_total_external_new < total_core_readers ~ total_core_readers,
+                                              TRUE ~ employees_total_external_new
+     ),
+     next_ccr_growth_rate = pmin(next_ccr_growth_rate, 3)) %>% 
+  ggplot(aes(x=employees_total_external_new, y = next_ccr_growth_rate)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  geom_smooth(method = "gam") +
+  geom_smooth(method = 'lm', colour = 'red') +
+  labs(title = "Second Version Total Employees (Min. capped at total core readers) vs. Next CCR Absolute Growth, logarithmic scale")
+
+old_employees_perc_growth + new_employees_perc_growth
+```
+
+
+```{r}
+# Employee total external in bins vs Growth Rate 
+growth_data_merged_trimmed %>% 
+  mutate(next_ccr_growth_rate = pmin(next_ccr_growth_rate, 4),
+         employees_total_external_new = case_when(employees_total_external_new < total_core_readers ~ total_core_readers,
+                                              TRUE ~ employees_total_external_new),
+         employees_total_bins = cut_number(employees_total_external_new,n = 10)) %>% 
+  ggplot(aes(x=employees_total_bins, y = next_ccr_growth_rate)) +
+  geom_violin(width = 1.4) +
+  coord_flip() +
+  theme_ema() +
+  labs(title = 'Growth Rate per bin of total employees (minimum capped at total core readers)')
+```
+
+Annual Sales
+
+```{r}
+old_annual_sales_abs <- 
+  growth_data_merged_trimmed %>% 
+  filter(annual_sales_indicator_external != 2) %>% 
+  ggplot(aes(x=annual_sales_in_us_dollars_external, y = next_ccr_growth_abs)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  scale_y_log10() +
+#  geom_smooth(method = "gam") +
+  geom_smooth(method = 'lm', colour = 'red') +
+  labs(title = "First Version Annual Sales (category 2 removed) vs. Next CCR Absolute Growth, logarithmic scale")
+
+new_annual_sales_abs <- 
+  growth_data_merged_trimmed %>% 
+#  filter(annual_sales_indicator_external != 2) %>% 
+  ggplot(aes(x=annual_sales_in_us_dollars_external_new, y = next_ccr_growth_abs)) +
+  geom_point(alpha=0.1) +
+  scale_x_log10() +
+  scale_y_log10() +
+#  geom_smooth(method = "gam") +
+  geom_smooth(method = 'lm', colour = 'red') +
+  labs(title = "Second Version Annual Sales vs. Next CCR Absolute Growth, logarithmic scale")
+
+old_annual_sales_abs + new_annual_sales_abs
+```
+
+```{r}
+growth_data_merged_trimmed %>% 
+  filter((annual_sales_indicator_external == 2) & (is.na(annual_sales_in_us_dollars_external_new)))
+```
+
+## Bivariate
+
+```{r}
+set.seed(2021)
+
+data <-  growth_data_merged_trimmed %>% 
+  mutate(random_noise = runif(n()), #Adding random noise
+         employees_total_external = if_else(employees_total_external < total_core_readers, total_core_readers,employees_total_external),
+         employees_total_external_new = if_else(employees_total_external_new < total_core_readers, total_core_readers, employees_total_external_new),
+         annual_sales_in_us_dollars_external = if_else(annual_sales_indicator_external == 2, 
+                                                       median(annual_sales_in_us_dollars_external, na.rm = T),
+                                                       annual_sales_in_us_dollars_external),
+         annual_sales_in_us_dollars_external_new = if_else((annual_sales_indicator_external == 2) & (is.na(annual_sales_in_us_dollars_external_new)), 
+                                                       median(annual_sales_in_us_dollars_external_new, na.rm = T),
+                                                       annual_sales_in_us_dollars_external_new),
+         next_ccr_growth_rate = pmin(next_ccr_growth_rate, 4)
+  )
+
+skim(data)
+
+data <- 
+  data %>% 
+  mutate(employees_total_external = if_else(is.na(employees_total_external), median(employees_total_external, na.rm=TRUE), employees_total_external),
+         employees_total_external_new = if_else(is.na(employees_total_external_new), median(employees_total_external_new, na.rm=TRUE), employees_total_external_new),
+         annual_sales_in_us_dollars_external = if_else(is.na(annual_sales_in_us_dollars_external), median(annual_sales_in_us_dollars_external, na.rm=TRUE), annual_sales_in_us_dollars_external),
+         annual_sales_in_us_dollars_external_new = if_else(is.na(annual_sales_in_us_dollars_external_new), median(annual_sales_in_us_dollars_external_new, na.rm=TRUE), annual_sales_in_us_dollars_external_new))
+
+skim(data)
+```
+
+```{r}
+m_emp_total_freq <- lm(next_ccr_growth_rate ~ scale(log1p(employees_total_external)), data = data)
+m_emp_total_freq_new <- lm(next_ccr_growth_rate ~ scale(log1p(employees_total_external_new)), data = data)
+m_sales_total_freq  <- lm(next_ccr_growth_rate ~ scale(log1p(annual_sales_in_us_dollars_external)), data = data)
+m_sales_total_freq_new  <- lm(next_ccr_growth_rate ~ scale(log1p(annual_sales_in_us_dollars_external_new)), data = data)
+m_excess_engaged_freq  <- lm(next_ccr_growth_rate ~ scale(excess_engaged_users), data = data)
+m_log_total_core_freq  <- lm(next_ccr_growth_rate ~ scale(log_total_core), data = data)
+random_noise_model_freq <- lm(next_ccr_growth_rate ~ scale(random_noise), data = data)
+
+compare_performance(m_emp_total_freq, m_emp_total_freq_new, m_sales_total_freq ,m_sales_total_freq_new, m_excess_engaged_freq , m_log_total_core_freq, random_noise_model_freq)
+```
+
+Name                    | Model |       AIC |       BIC |        R2 |  R2 (adj.) |  RMSE | Sigma
+------------------------------------------------------------------------------------------------
+m_emp_total_freq        |    lm | 10728.934 | 10751.144 | 8.636e-04 |  7.812e-04 | 0.376 | 0.377
+m_emp_total_freq_new    |    lm | 10730.643 | 10752.853 | 7.228e-04 |  6.404e-04 | 0.377 | 0.377
+m_sales_total_freq      |    lm | 10727.088 | 10749.298 |     0.001 |  9.333e-04 | 0.376 | 0.376
+m_sales_total_freq_new  |    lm | 10729.638 | 10751.848 | 8.056e-04 |  7.232e-04 | 0.377 | 0.377
+m_excess_engaged_freq   |    lm | 10711.012 | 10733.222 |     0.002 |      0.002 | 0.376 | 0.376
+m_log_total_core_freq   |    lm | 10724.789 | 10746.999 |     0.001 |      0.001 | 0.376 | 0.376
+random_noise_model_freq |    lm | 10739.411 | 10761.621 | 1.081e-07 | -8.236e-05 | 0.377 | 0.377
+
+
+```{r}
+# A function to extract a coefficient from a fitted model
+extract_coefs <- function(fitted_model){
+  if ("glm" %in% class(fitted_model)) {
+    result <- coef(fitted_model) %>% 
+      tidy() %>% 
+      bind_cols(confint_tidy(fitted_model)) %>% 
+      rename(term = names,
+             estimate = x)
+  } else{
+  result <- summary(fitted_model) %>% 
+    tidy() %>% 
+    bind_cols(confint_tidy(fitted_model))
+  }
+  result
+}
+
+# A function to combine coefs from a list of models into a data frame.
+combine_coefs <- function(list_of_fitted_models){
+  coefs_df <- tibble()
+  for (i in seq_along(list_of_fitted_models)) {
+    coefs_df <- bind_rows(coefs_df, extract_coefs(list_of_fitted_models[[i]]))
+  }
+  coefs_df %>% 
+    filter(term != "(Intercept)")
+}
+
+
+models <- list(m_emp_total_freq, m_emp_total_freq_new, m_sales_total_freq ,m_sales_total_freq_new, m_excess_engaged_freq , m_log_total_core_freq, random_noise_model_freq)
+
+combine_coefs(models) %>% 
+  ggplot(aes(y = estimate, x = term)) +
+  geom_point() +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high)) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  coord_flip() +
+  labs(title = 'Coefs of bivariate regression s vs. Growth Rate') 
+
+
+```
+
+
+
+```{r}
+m_emp_total_freq_abs <- lm(next_ccr_growth_abs ~ scale(log1p(employees_total_external)), data = data)
+m_emp_total_freq_new_abs <- lm(next_ccr_growth_abs ~ scale(log1p(employees_total_external_new)), data = data)
+m_sales_total_freq_abs  <- lm(next_ccr_growth_abs ~ scale(log1p(annual_sales_in_us_dollars_external)), data = data)
+m_sales_total_freq_new_abs  <- lm(next_ccr_growth_abs ~ scale(log1p(annual_sales_in_us_dollars_external_new)), data = data)
+m_excess_engaged_freq_abs  <- lm(next_ccr_growth_abs ~ scale(excess_engaged_users), data = data)
+m_log_total_core_freq_abs  <- lm(next_ccr_growth_abs ~ scale(log_total_core), data = data)
+random_noise_model_freq_abs <- lm(next_ccr_growth_abs ~ scale(random_noise), data = data)
+
+compare_performance(m_emp_total_freq_abs, m_emp_total_freq_new_abs, m_sales_total_freq_abs ,m_sales_total_freq_new_abs, m_excess_engaged_freq_abs , m_log_total_core_freq_abs, random_noise_model_freq_abs)
+```
+
+Name                        | Model |       AIC |       BIC |        R2 | R2 (adj.) |   RMSE |  Sigma
+-----------------------------------------------------------------------------------------------------
+m_emp_total_freq_abs        |    lm | 1.318e+05 | 1.318e+05 | 3.655e-04 | 2.830e-04 | 55.449 | 55.453
+m_emp_total_freq_new_abs    |    lm | 1.318e+05 | 1.318e+05 | 8.407e-05 | 1.612e-06 | 55.457 | 55.461
+m_sales_total_freq_abs      |    lm | 1.318e+05 | 1.318e+05 | 2.598e-04 | 1.774e-04 | 55.452 | 55.456
+m_sales_total_freq_new_abs  |    lm | 1.318e+05 | 1.318e+05 | 9.271e-05 | 1.025e-05 | 55.456 | 55.461
+m_excess_engaged_freq_abs   |    lm | 1.311e+05 | 1.311e+05 |     0.056 |     0.056 | 53.877 | 53.881
+m_log_total_core_freq_abs   |    lm | 1.318e+05 | 1.318e+05 |     0.001 |     0.001 | 55.424 | 55.428
+random_noise_model_freq_abs |    lm | 1.318e+05 | 1.318e+05 | 1.371e-04 | 5.468e-05 | 55.455 | 55.460
+
+
+```{r}
+models <- list(m_emp_total_freq_abs, m_emp_total_freq_new_abs, m_sales_total_freq_abs ,m_sales_total_freq_new_abs, m_excess_engaged_freq_abs , m_log_total_core_freq_abs, random_noise_model_freq_abs)
+
+combine_coefs(models) %>% 
+  ggplot(aes(y = estimate, x = term)) +
+  geom_point() +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high)) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  coord_flip() +
+  labs(title = 'Coefs of bivariate regression s vs. Growth Rate') 
+
+```
+
+### VS current model
+
+```{r}
+current_formula <- next_ccr_growth_rate ~ 
+  scale(log_total_core) + 
+  scale(excess_engaged_users) +
+  licence_type +
+  factor(num_prev_renewals_capped) +
+  opportunity_region +
+  sector
+  
+
+current_growth_model <- lm(formula = current_formula,
+                   x = FALSE,
+                   y = FALSE,
+                   data = data)
+
+new_formula <- next_ccr_growth_rate ~ 
+  scale(log_total_core) + 
+  scale(excess_engaged_users) +
+  licence_type +
+  factor(num_prev_renewals_capped) +
+  opportunity_region +
+  sector +
+  scale(log1p(employees_total_external)) +
+  scale(log1p(annual_sales_in_us_dollars_external))
+  
+
+new_growth_model <- lm(formula = new_formula,
+                   x = FALSE,
+                   y = FALSE,
+                   data = data)
+
+compare_performance(current_growth_model, new_growth_model)
+```
+
+```{r}
+check_model(current_growth_model)
+check_model(new_growth_model)
+```
+
+```{r}
+models <- list(current_growth_model, new_growth_model)
+
+combine_coefs(models) %>% 
+  ggplot(aes(y = estimate, x = term)) +
+  geom_point() +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high)) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  coord_flip() +
+  labs(title = 'Coefs of bivariate regression s vs. Growth Rate') 
+```
+
+
+```{r}
+current_formula <- next_ccr_growth_abs ~ 
+  scale(log_total_core) + 
+  scale(excess_engaged_users) +
+  licence_type +
+  factor(num_prev_renewals_capped) +
+  opportunity_region +
+  sector
+  
+
+current_growth_model <- lm(formula = current_formula,
+                   x = FALSE,
+                   y = FALSE,
+                   data = data)
+
+new_formula <- next_ccr_growth_abs ~ 
+  scale(log_total_core) + 
+  scale(excess_engaged_users) +
+  licence_type +
+  factor(num_prev_renewals_capped) +
+  opportunity_region +
+  sector +
+  scale(log1p(employees_total_external)) +
+  scale(log1p(annual_sales_in_us_dollars_external))
+  
+
+new_growth_model <- lm(formula = new_formula,
+                   x = FALSE,
+                   y = FALSE,
+                   data = data)
+
+compare_performance(current_growth_model, new_growth_model)
+```
+
+```{r}
+models <- list(current_growth_model, new_growth_model)
+
+combine_coefs(models) %>% 
+  ggplot(aes(y = estimate, x = term)) +
+  geom_point() +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high)) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  coord_flip() +
+  labs(title = 'Coefs of bivariate regression s vs. Growth Rate') 
+```
+
+```{r}
+check_model(current_growth_model)
+check_model(new_growth_model)
+```
+
+
+
+# BELOW IS WIP, NOT TO BE REVIEWED YET :)
+And most probably it is better to move it to a separate notebook.
+
+
+
+
+```{r}
+m_emp_total_freq <- lm(next_ccr_growth_rate ~ log1p(employees_total_external), data = growth_data_merged_trimmed)
+m_sales_total_freq  <- lm(next_ccr_growth_rate ~ log1p(annual_sales_in_us_dollars_external), data = growth_data_merged_trimmed)
+m_excess_engaged_freq  <- lm(next_ccr_growth_rate ~ excess_engaged_users, data = growth_data_merged_trimmed)
+m_log_total_core_freq  <- lm(next_ccr_growth_rate ~ log_total_core, data = growth_data_merged_trimmed)
+random_noise_model_freq <- lm(next_ccr_growth_rate ~ random_noise, data = growth_data_merged_trimmed)
+
+compare_performance(m_emp_total_freq , m_sales_total_freq , m_excess_engaged_freq , m_log_total_core_freq, random_noise_model_freq)
+```
+
+
+```{r}
+m_emp_enaged_freq_abs <- lm(next_core_readers ~ log1p(employees_total_external) + excess_engaged_users, data = data)
+m_sales_engaged_freq_abs  <- lm(next_core_readers ~ log1p(annual_sales_in_us_dollars_external) + excess_engaged_users, data = data)
+m_emp_total_core_freq_abs <- lm(next_core_readers ~ log1p(employees_total_external) + log_total_core, data = data)
+m_sales_total_core_freq_abs  <- lm(next_core_readers ~ log1p(annual_sales_in_us_dollars_external) + log_total_core, data = data)
+m_sales_random_noise_abs  <- lm(next_core_readers ~ log1p(annual_sales_in_us_dollars_external) + random_noise, data = data)
+m_emp_random_noise_abs <- lm(next_core_readers ~ log1p(employees_total_external) + random_noise, data = data)
+
+compare_performance(m_emp_enaged_freq_abs , m_sales_engaged_freq_abs , m_emp_total_core_freq_abs , m_sales_total_core_freq_abs, m_sales_random_noise_abs, m_emp_random_noise_abs)
+
+```
+
+```{r}
+
+
+# set.seed(2021)
+# growth_data_merged_trimmed <- growth_data_merged_trimmed %>% 
+#   mutate(random_noise = runif(n()))
+# 
+#   
+# m_emp_total <- stan_glm(next_ccr_growth_rate ~ log1p(employees_total_external), data = growth_data_merged_trimmed)
+# m_sales_total <- stan_glm(next_ccr_growth_rate ~ log1p(annual_sales_in_us_dollars_external), data = growth_data_merged_trimmed)
+# m_excess_engaged <- stan_glm(next_ccr_growth_rate ~ excess_engaged_users, data = growth_data_merged_trimmed)
+# m_log_total_core<- stan_glm(next_ccr_growth_rate ~ log_total_core, data = growth_data_merged_trimmed)
+# random_noise_model <- stan_glm(next_ccr_growth_rate ~ random_noise, data = growth_data_merged_trimmed)
+# 
+# compare_performance(m_emp_total, m_sales_total, m_excess_engaged, m_log_total_core, random_noise_model)
+
+
+# m_emp_enaged_bayes <- stan_glm(next_ccr_growth_rate ~ log1p(employees_total_external) + excess_engaged_users, data = growth_data_merged_trimmed)
+# m_sales_engaged_bayes  <- stan_glm(next_ccr_growth_rate ~ log1p(annual_sales_in_us_dollars_external) + excess_engaged_users, data = growth_data_merged_trimmed)
+# m_emp_total_core_bayes <- stan_glm(next_ccr_growth_rate ~ log1p(employees_total_external) + log_total_core, data = growth_data_merged_trimmed)
+# m_sales_total_core_bayes <- stan_glm(next_ccr_growth_rate ~ log1p(annual_sales_in_us_dollars_external) + log_total_core, data = growth_data_merged_trimmed)
+# 
+# compare_performance(m_emp_enaged_bayes , m_sales_engaged_bayes , m_emp_total_core_bayes , m_sales_total_core_bayes )
+
+# m_emp_enaged_bayes_abs <- stan_glm(next_core_readers ~ log1p(employees_total_external) + excess_engaged_users, data = growth_data_merged_trimmed)
+# m_sales_engaged_bayes_abs  <- stan_glm(next_core_readers ~ log1p(annual_sales_in_us_dollars_external) + excess_engaged_users, data = growth_data_merged_trimmed)
+# m_emp_total_core_bayes_abs <- stan_glm(next_core_readers ~ log1p(employees_total_external) + log_total_core, data = growth_data_merged_trimmed)
+# m_sales_total_core_bayes_abs  <- stan_glm(next_core_readers ~ log1p(annual_sales_in_us_dollars_external) + log_total_core, data = growth_data_merged_trimmed)
+# 
+# compare_performance(m_emp_enaged_bayes_abs , m_sales_engaged_bayes_abs , m_emp_total_core_bayes_abs , m_sales_total_core_bayes_abs )
+```
+
+
+
+
+
+```{r}
+
+renewal_employees_freq <- stata:glm(factor(renewed) ~ log1p(employees_total_external), data = attrition_data_merged_trimmed, family = "binomial")
+renewal_sales_freq <- stan_glm(factor(renewed) ~ log1p(annual_sales_in_us_dollars_external), data = attrition_data_merged_trimmed, family = "binomial")
+renewal_log_prop_engaged_freq <- stan_glm(factor(renewed) ~ log_prop_engaged, data = attrition_data_merged_trimmed, family = "binomial")
+renewal_log_total_core_freq <- stan_glm(factor(renewed) ~ log_total_core, data = attrition_data_merged_trimmed, family = "binomial")
+renewal_random_noise <- stan_glm(factor(renewed) ~ random_noise, data = attrition_data_merged_trimmed, family = "binomial")
+
+compare_performance(renewal_employees_freq , renewal_sales_freq , renewal_log_prop_engaged_freq , renewal_log_total_core_freq, renewal_random_noise)
+```
+
+
+
+
+```{r}
+check_model(renewal_employees_freq)
+```
+
+```{r}
+predict.lm(m_sales_total_core_freq_abs, growth_data_merged_trimmed)
+m_sales_engaged_freq
+
+growth_data_merged_trimmed %>% 
+  mutate(total_growth_predictions = predict.lm(m_sales_total_core_freq_abs, growth_data_merged_trimmed),
+         perc_growth_predictions = predict.lm(m_sales_engaged_freq, growth_data_merged_trimmed),
+         total_growth_predictions = pmax(0, total_growth_predictions),
+        total_growth_predictions = dplyr::if_else(total_growth_predictions > employees_total_external, employees_total_external, total_growth_predictions),
+         growth_estimate_from_total = total_growth_predictions/total_core_readers
+         ) %>% 
+  summarise(
+    growth_rmse = yardstick::rmse_vec(next_ccr_growth_rate, perc_growth_predictions),
+    totals_model_rmse = yardstick::rmse_vec(next_ccr_growth_rate, growth_estimate_from_total),
+    growth_mape = yardstick::smape_vec(next_ccr_growth_rate, perc_growth_predictions),
+    totals_model_mape = yardstick::smape_vec(next_ccr_growth_rate, growth_estimate_from_total),
+  )
+
+growth_data_merged_trimmed %>% 
+  mutate(total_growth_predictions = predict.lm(m_sales_total_core_freq_abs, growth_data_merged_trimmed),
+         perc_growth_predictions = predict.lm(m_sales_engaged_freq, growth_data_merged_trimmed),
+         total_growth_predictions = pmax(0, total_growth_predictions),
+        total_growth_predictions = dplyr::if_else(total_growth_predictions > employees_total_external, employees_total_external, total_growth_predictions),
+         growth_estimate_from_total = total_growth_predictions/total_core_readers
+         ) %>% 
+  ggplot(aes(x = growth_estimate_from_total, y = next_ccr_growth_rate)) +
+  geom_point(alpha = .1) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method='lm')
+
+growth_data_merged_trimmed %>% 
+  mutate(total_growth_predictions = predict.lm(m_sales_total_core_freq_abs, growth_data_merged_trimmed),
+         perc_growth_predictions = predict.lm(m_sales_engaged_freq, growth_data_merged_trimmed),
+         total_growth_predictions = pmax(0, total_growth_predictions),
+        total_growth_predictions = dplyr::if_else(total_growth_predictions > employees_total_external, employees_total_external, total_growth_predictions),
+         growth_estimate_from_total = total_growth_predictions/total_core_readers
+         ) %>% 
+  ggplot(aes(x = perc_growth_predictions, y = next_ccr_growth_rate)) +
+  geom_point(alpha = .1) +
+  scale_x_log10() +
+  scale_y_log10() +
+  geom_smooth(method='lm')
+```
+
+
+```{r Outlier Rates analysis}
+
+
+growth_data_merged %>% 
+  filter(
+    next_ccr_growth_rate < 0.1
+  ) %>% 
+  View()
+
+growth_data_merged %>% 
+  filter(
+    next_ccr_growth_rate > 10
+  ) %>% 
+  View()
+
+growth_data_merged %>% 
+  filter(
+    next_ccr_growth_rate > 1.2 | next_ccr_growth_rate < 0.8
+  ) %>% 
+  dim()
+
+```
+
+
+
+```{r}
+formula <- factor(renewed) ~ 
+  log_prop_engaged +
+  log_total_core +
+  factor(num_prev_renewals_capped) +
+  licence_type + 
+  opportunity_region + 
+  sector
+
+attrition_model <- glm(formula = formula,
+                   family = "binomial",
+                   model = FALSE,
+                   x = FALSE,
+                   y = FALSE,
+                   data = attrition_data)
+
+dim(as_tibble(attrition_model$fitted.values))
+
+```
+
+```{r}
+explain(attrition_model,
+                   data = attrition_data %>% select(  log_prop_engaged, log_total_core, num_prev_renewals_capped,
+                                                      licence_type, opportunity_region, sector),
+                   y = as_factor(attrition_data$renewed)
+        )
+```
+
+
+```{r}
+emp_rec <- recipe(next_ccr_growth_rate ~ 
+  log_total_core + 
+  excess_engaged_users +
+  licence_type +
+  num_prev_renewals_capped +
+  opportunity_region +
+  sector + 
+  employees_total_external,
+  data = growth_data_merged) %>% 
+  step_mutate(num_prev_renewals_capped = as_factor(num_prev_renewals_capped)) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_log(employees_total_external, offset = 1) %>% 
+  step_normalize(all_numeric(), -all_outcomes())
+
+linreg_reg_spec <- 
+    linear_reg() %>% 
+    set_engine("stan")
+
+  
+
+bayes_wf <- workflow() %>% 
+  add_recipe(emp_rec) %>% 
+  add_model(linreg_reg_spec)
+
+bayes_fit <- bayes_wf %>% 
+  fit(growth_data_merged)
+
+posteriors <- insight::get_parameters(bayes_fit$fit$fit)
+
+posteriors %>% 
+  summarise_all(mean) %>% 
+  t() %>% as.data.frame() %>% 
+  arrange(desc(V1))
+
+pandas_transpose <- function(df){
+  
+  df %>% t() %>% as.data.frame()
+}
+
+ggplot(posteriors, aes(x = employees_total_external)) +
+  geom_density(fill = "orange")
+```
+
+```{r}
+emp_rec <- recipe(next_ccr_growth_rate ~ 
+  log_total_core + 
+  excess_engaged_users +
+  licence_type +
+  num_prev_renewals_capped +
+  opportunity_region +
+  sector + 
+  employees_total_external,
+  data = growth_data_merged) %>% 
+  step_mutate(num_prev_renewals_capped = as_factor(num_prev_renewals_capped)) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_log(employees_total_external, offset = 1) %>% 
+  step_normalize(all_numeric(), -all_outcomes())
+
+linreg_reg_spec <- 
+    linear_reg() %>% 
+    set_engine("stan")
+
+  
+
+bayes_wf <- workflow() %>% 
+  add_recipe(emp_rec) %>% 
+  add_model(linreg_reg_spec)
+
+bayes_fit <- bayes_wf %>% 
+  fit(growth_data_merged %>% 
+  dplyr::distinct(across(c(account_name, account_id, client_type, licence_type, 
+                         product, contract_start_date, contract_end_date, contract_id,
+                         value, next_core_readers, core_readers, total_core_readers, num_prev_renewals,
+                         renewed)),
+                  .keep_all = T))
+
+posteriors <- insight::get_parameters(bayes_fit$fit$fit)
+
+posteriors %>% 
+  summarise_all(mean) %>% 
+  t() %>% as.data.frame() %>% 
+  arrange(desc(V1))
+
+posteriors %>% summarise_all(mean) %>% pandas_transpose()
+
+ggplot(posteriors, aes(x = employees_total_external)) +
+  geom_density(fill = "orange")
+```
+
+
+
+
+
+```{r}
+
+test_data <- data %>%
+  filter(contract_end_date >= Sys.Date() - 90)
+
+train <- anti_join(data, data_test %>% select(id_sort) %>% distinct(),
+                  by = "id_sort")
+
+
+cap_point <- quantile(train$next_ccr_growth_rate, .99,names = F)
+median_employees <- median(train$employees_total_external, na.rm = T)
+median_sales <- median(train$annual_sales_in_us_dollars_external, na.rm = T)
+
+train <- train %>% 
+  mutate(next_ccr_growth_rate = dplyr::case_when(next_ccr_growth_rate > cap_point ~ cap_point,
+                                                      TRUE ~ next_ccr_growth_rate
+                                                      ),
+         employees_total_external = replace_na(employees_total_external, median_employees),
+         annual_sales_in_us_dollars_external = replace_na(annual_sales_in_us_dollars_external, median_sales),
+         )
+
+test_data <- test_data %>% 
+  mutate(next_ccr_growth_rate = dplyr::case_when(
+    next_ccr_growth_rate > cap_point ~ cap_point,
+    TRUE ~ next_ccr_growth_rate),
+         employees_total_external = replace_na(employees_total_external, median_employees),
+         annual_sales_in_us_dollars_external = replace_na(annual_sales_in_us_dollars_external, median_sales),
+         )
+
+set.seed(2021)
+mset <- metric_set(rmse)
+
+grid_control <- control_grid(save_pred = T,
+                             save_workflow = T,
+                             extract = extract_model
+                             )
+
+train_fold5 <- train %>% vfold_cv(5) #allows for a strata argument
+```
+
+```{r}
+formula <- next_ccr_growth_rate ~ 
+  log_total_core + 
+  excess_engaged_users +
+  licence_type +
+  factor(num_prev_renewals_capped) +
+  opportunity_region +
+  sector
+
+growth_model <- lm(formula = formula,
+                   x = FALSE,
+                   y = FALSE,
+                   data = train)
+
+glance(growth_model)
+summary(growth_model)
+```
+
+```{r}
+formula_emp <- next_ccr_growth_rate ~ 
+  log_total_core + 
+  excess_engaged_users +
+  licence_type +
+  factor(num_prev_renewals_capped) +
+  opportunity_region +
+  sector +
+  log1p(employees_total_external)
+
+growth_model_emp <- lm(formula = formula_emp,
+                   x = FALSE,
+                   y = FALSE,
+                   data = train)
+
+glance(growth_model_emp)
+summary(growth_model_emp)
+```
+
+```{r}
+formula_sales <- next_ccr_growth_rate ~ 
+  log_total_core + 
+  excess_engaged_users +
+  licence_type +
+  factor(num_prev_renewals_capped) +
+  opportunity_region +
+  sector +
+  log1p(annual_sales_in_us_dollars_external)
+
+growth_model_sales <- lm(formula = formula_sales,
+                   x = FALSE,
+                   y = FALSE,
+                   data = train)
+
+summary(growth_model_sales)
+```
+
+```{r}
+
+predict(growth_model, test_data, type = "response") %>% 
+  tibble(prediction_prob = .) %>% 
+  bind_cols(test_data) %>% 
+  rmse(prediction_prob, next_ccr_growth_rate)
+
+predict(growth_model_emp, test_data, type = "response") %>% 
+  tibble(prediction_prob = .) %>% 
+  bind_cols(test_data) %>% 
+  rmse(prediction_prob, next_ccr_growth_rate)
+
+
+```
+
+```{r}
+prep_juice <- function(d) juice(prep(d))
+
+base_model_rec <- recipe(next_ccr_growth_rate ~ 
+  log_total_core + 
+  excess_engaged_users +
+  licence_type +
+  num_prev_renewals_capped +
+  opportunity_region +
+  sector,
+  data = train) %>% 
+  step_mutate(num_prev_renewals_capped = as_factor(num_prev_renewals_capped)) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_normalize(all_numeric(), -all_outcomes())
+
+base_model_mod <- linear_reg(mode = 'regression', penalty = tune(), mixture = tune()) %>% 
+  set_engine('glmnet')
+
+base_model_wf <- workflow() %>% 
+  add_recipe(base_model_rec) %>% 
+  add_model(base_model_mod)
+
+base_model_tune <- base_model_wf %>% 
+  tune_grid(train_fold5,
+            metrics = mset,
+            control = grid_control,
+            grid = crossing(penalty = 10 ^ seq(-5, - 0.01, .09),
+                            mixture = c(0, 0.3, 0.5, 0.7, 1)
+                            )
+            )
+
+autoplot(base_model_tune)
+
+base_model_tune %>% 
+  collect_metrics() %>% 
+  arrange(mean)
+
+
+```
+
+```{r}
+base_model_fit <- base_model_wf %>%
+  finalize_workflow(select_best(base_model_tune)) %>%
+  fit(train)
+
+base_model_fit %>%
+  augment(test_data) %>%
+  rmse(.pred, next_ccr_growth_rate)
+
+```
+
+```{r}
+base_model_fit$fit$fit$fit %>%
+  tidy() %>%
+  filter(lambda >= select_best(base_model_tune)$penalty) %>%
+  filter(lambda == min(lambda),
+         term != "(Intercept)") %>%
+  top_n(50, abs(estimate)) %>%
+  mutate(term = fct_reorder(term, estimate)) %>%
+  ggplot(aes(estimate, term, fill = estimate > 0)) +
+  geom_col() +
+  theme(legend.position = "none")
+``` 
+
+```{r}
+
+emp_rec <- recipe(next_ccr_growth_rate ~ 
+  log_total_core + 
+  excess_engaged_users +
+  licence_type +
+  num_prev_renewals_capped +
+  opportunity_region +
+  sector + 
+  employees_total_external,
+  data = train) %>% 
+  step_mutate(num_prev_renewals_capped = as_factor(num_prev_renewals_capped)) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_log(employees_total_external, offset = 1) %>% 
+  step_normalize(all_numeric(), -all_outcomes())
+
+emp_mod <- linear_reg(mode = 'regression', penalty = tune(), mixture = tune()) %>% 
+  set_engine('glmnet')
+
+emp_wf <- workflow() %>% 
+  add_recipe(emp_rec) %>% 
+  add_model(emp_mod)
+
+emp_tune <- emp_wf %>% 
+  tune_grid(train_fold5,
+            metrics = mset,
+            control = grid_control,
+            grid = crossing(penalty = 10 ^ seq(-5, - 0.01, .09),
+                            mixture = c(0, 0.3, 0.5, 0.7, 1)
+                            )
+            )
+
+inautoplot(emp_tune)
+
+emp_tune %>% 
+  collect_metrics() %>% 
+  arrange(mean)
+
+```
+
+```{r}
+emp_model_fit <- emp_wf %>%
+  finalize_workflow(select_best(emp_tune)) %>%
+  fit(train)
+
+emp_model_fit %>%
+  augment(test_data) %>%
+  rmse(.pred, next_ccr_growth_rate)
+```
+
+```{r}
+emp_model_fit$fit$fit$fit %>%
+  tidy() %>%
+  filter(lambda >= select_best(base_model_tune)$penalty) %>%
+  filter(lambda == min(lambda),
+         term != "(Intercept)") %>%
+  top_n(50, abs(estimate)) %>%
+  mutate(term = fct_reorder(term, estimate)) %>%
+  ggplot(aes(estimate, term, fill = estimate > 0)) +
+  geom_col() +
+  theme(legend.position = "none")
+``` 
+
+
+```{r}
+
+rec_interact <- 
+  emp_rec %>% 
+  step_ns(excess_engaged_users, log_total_core, employees_total_external)
+
+
+
+
+#  step_interact(~employees_total_external:starts_with("opportunity_region"))
+#  step_interact(terms = ~employees_total_external:starts_with('sector')) %>% 
+#  step_interact(terms = ~log_total_core::starts_with("opportunity_region"))
+
+emp_mod <- linear_reg(mode = 'regression', penalty = tune(), mixture = tune()) %>% 
+  set_engine('glmnet')
+
+rec_wf <- workflow() %>% 
+  add_recipe(rec_interact) %>% 
+  add_model(emp_mod)
+
+rec_tune <- rec_wf %>% 
+  tune_grid(train_fold5,
+            metrics = mset,
+            control = grid_control,
+            grid = crossing(penalty = 10 ^ seq(-5, - 0.01, .09),
+                            mixture = c(0, 0.3, 0.5, 0.7, 1)
+                            )
+            )
+
+autoplot(rec_tune)
+
+rec_tune %>% 
+  collect_metrics() %>% 
+  arrange(mean)
+
+```
+
+```{r}
+interact_model_fit <- rec_wf %>%
+  finalize_workflow(select_best(emp_tune)) %>%
+  fit(train)
+
+interact_model_fit %>%
+  augment(test_data) %>%
+  rmse(.pred, next_ccr_growth_rate)
+```
+
+
+
+```{r}
+interact_model_fit$fit$fit$fit %>%
+  tidy() %>%
+  filter(lambda >= select_best(base_model_tune)$penalty) %>%
+  filter(lambda == min(lambda),
+         term != "(Intercept)") %>%
+  top_n(50, abs(estimate)) %>%
+  mutate(term = fct_reorder(term, estimate)) %>%
+  ggplot(aes(estimate, term, fill = estimate > 0)) +
+  geom_col() +
+  theme(legend.position = "none")
+``` 
+
+```{r}
+orig_predictions <- predict(growth_model_emp, test_data, type = "response") %>% 
+  tibble(prediction_prob = .)
+
+spline_plot <- 
+  interact_model_fit %>% 
+  augment(test_data) %>% 
+  bind_cols(orig_predictions) %>% 
+  ggplot(aes(next_ccr_growth_rate, .pred, size=total_core_readers)) +
+  geom_point(alpha=0.1) +
+  scale_y_continuous(limits = c(0.9, 1.3), breaks = seq(0.9, 1.3, by = 0.1))
+
+orig_plot <- 
+  interact_model_fit %>% 
+  augment(test_data) %>% 
+  bind_cols(orig_predictions) %>% 
+  ggplot(aes(next_ccr_growth_rate, prediction_prob, size=total_core_readers)) +
+  geom_point(alpha=0.1) +
+  scale_y_continuous(limits = c(0.9, 1.3), breaks = seq(0.9, 1.3, by = 0.1)) 
+
+
+spline_plot / orig_plot
+#+ plot_layout(ncol=1,heights=c(3,5))
+```
+
+```{r}
+interact_model_fit %>% 
+  augment(test_data) %>% 
+  bind_cols(orig_predictions) %>% 
+  mutate(spline_error = abs(next_ccr_growth_rate - .pred),
+         baseline_error = abs(next_ccr_growth_rate - prediction_prob),
+         spline_penalty = spline_error*total_core_readers,
+         baseline_penalty = spline_error*baseline_error
+         ) %>% 
+  summarize(total_spline_penalty = sum(spline_penalty),
+            total_baseline_penalty = sum(baseline_error),
+            median_spline_penalty = median(spline_penalty),
+            median_baseline_penalty = median(baseline_penalty)
+            
+            )
+```
+
+
+
+
+```{r}
+
+attrition_data_imputed %>% 
+  mutate(pred_proba = predict.glm(new_attrition_features_model, newdata = attrition_data_imputed, type = 'response'),
+         pred = dplyr::if_else(pred_proba > 0.835, 1, 0),
+         pred = as_factor(pred),
+         renewed = as_factor(renewed)
+         ) %>% 
+  conf_mat(  renewed, pred)
+
+attrition_data_imputed %>% 
+  mutate(pred_proba = predict.glm(attrition_model, newdata = attrition_data_imputed, type = 'response'),
+         pred = dplyr::if_else(pred_proba > 0.835, 1, 0),
+         pred = as_factor(pred),
+         renewed = as_factor(renewed)
+         ) %>% 
+  conf_mat(  renewed, pred)
+
+```
+
+
