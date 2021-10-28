@@ -1,0 +1,101 @@
+---
+title: "Sliced 7 - D. Rob Walkthrough"
+output: html_notebook
+---
+
+Data dictionary
+The variables are pretty self-explanatory. Two exceptions:
+
+'id': unique identifier for the customer
+'attrition_flag': whether the customer is churned (0 = no; 1 = yes)
+'customer_age': age of the customer
+'gender': gender of the customer
+'education_level': education level of the customer
+'income_category': income range of the customer
+'total_relationship_count': number of relationships
+'months_inactive_12_mon': number of months the customer is inactive in the past 12 months
+'credit_limit': the customer's credit limit
+'total_revolving_bal': the customer's total revolving balance
+'total_amt_chng_q4_q1': the amount the balance changed from Q4 to Q1
+'total_trans_amt': the value of all the customer's transactions in the period
+'total_trans_ct': the number of all of the customer's transactions
+'total_ct_chng_q4_q1': the difference in number of the customer's transactions from Q4 to Q1
+'avg_utilization_ratio': the customer's average utilization ratio during the period
+
+```{r}
+library(tidymodels)
+library(tidyverse)
+library(scales)
+library(lubridate)
+library(stacks)
+theme_set(theme_light())
+
+doParallel::registerDoParallel(cores = 4)
+```
+
+```{r}
+dataset <- read_csv("data/sliced-s01e07/train.csv") %>% 
+  mutate(churned = ifelse(attrition_flag == 1, "yes", "no")) %>% 
+  select(-attrition_flag)
+holdout <- read_csv("data/sliced-s01e07/test.csv")
+
+set.seed(2021)
+spl <- initial_split(dataset)
+train <- training(spl)
+test <- testing(spl)
+
+train_5fold <- train %>% 
+  vfold_cv(5)
+```
+
+```{r}
+summarize_churn <- function(tbl){
+  tbl %>% 
+    summarize(
+      n = n(),
+      n_churned = sum(churned == 'yes'),
+      pct_churned = n_churned/n,
+      low = qbeta(.025, n_churned + .5, n - n_churned + .5),
+      high = qbeta(.975, n_churned + .5, n - n_churned + .5)
+    ) %>% 
+    arrange(desc(n))
+}
+
+plot_categorical <- function(tbl, category, ...) {
+  if (!is.factor(pull(tbl, {{category}}))) {
+    tbl <- tbl %>% 
+      mutate({{category}} := fct_reorder({{category}}, pct_churned))
+  }
+  tbl %>% 
+    ggplot(aes(pct_churned, {{category}}, ...)) +
+    geom_col(position = position_dodge()) +
+    geom_errorbarh(position = position_dodge(width = 1), aes(xmin = low, xmax = high), height = .2) +
+    scale_x_continuous(labels = percent) +
+    labs(x = "% in category that churned")
+}
+
+train %>% 
+  group_by(gender) %>% 
+  summarize_churn() %>% 
+  plot_categorical(gender)
+
+train %>% 
+  group_by(education_level) %>% 
+  summarize_churn() %>% 
+  plot_categorical(education_level)
+
+train %>% 
+  group_by(education_level, gender) %>% 
+  summarize_churn() %>% 
+  plot_categorical(education_level, fill = gender, group = gender)
+
+train %>% 
+  mutate(income_category = fct_reorder(income_category, parse_number(income_category)),
+         income_category = fct_relevel(income_category, "Less than $40K")
+         ) %>% 
+  group_by(income_category, education_level) %>% 
+  summarize_churn() +
+  plot_categorical(income_category) +
+  coord_flip()
+ ```
+

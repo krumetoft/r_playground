@@ -1451,4 +1451,48 @@ attrition_data_imputed %>%
 
 ```
 
+```{r}
+formula <- factor(renewed) ~ 
+  scale(log1p(employees_total_external))
+# scale(log1p(annual_sales_in_us_dollars_external)) 
 
+attrition_model <- stats::glm(formula = formula,
+                   family = "binomial",
+                   data = attrition_data_merged %>% 
+  mutate(employees_total_external = pmin(employees_total_external, 500000)))
+
+new_formula <- factor(renewed) ~ 
+  # scale(log_prop_engaged) +
+ #  scale(log_total_core) +
+  # factor(num_prev_renewals_capped) +
+  # licence_type + 
+  # opportunity_region + 
+  # sector +
+  scale(log1p(annual_sales_in_us_dollars_external)) +
+  scale(log1p(employees_total_external))
+
+new_attrition_model <- stats::glm(formula = new_formula,
+                   family = "binomial",
+                   data = attrition_data_merged %>% 
+  mutate(employees_total_external = pmin(employees_total_external, 500000)))
+
+coefs <- extract_coefs(attrition_model) %>% 
+  mutate(model_name = 'current model') %>% 
+  bind_rows(extract_coefs(new_attrition_model) %>% 
+              mutate(model_name = 'updated model')
+              ) %>% 
+  filter(term != "(Intercept)") %>% 
+  mutate(term = fct_reorder(term, estimate)) %>% 
+  arrange(term) 
+
+coefs
+
+coefs %>% 
+  ggplot(aes(y = estimate, x = term, color = model_name)) +
+  geom_point() +
+  geom_pointrange(aes(ymin = conf.low, ymax = conf.high), stroke = 0, alpha = 0.6) +
+  geom_hline(yintercept = 0, linetype = 2) + 
+  coord_flip() +
+  labs(title = 'Attrition Model coefficients - incumbent and new models', x = "") +
+  theme_light()
+```
