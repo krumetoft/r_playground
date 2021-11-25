@@ -1,0 +1,150 @@
+---
+title: "Intro to Probabilistic aka Bayesian Inference"
+output: html_notebook
+---
+https://www.oreilly.com/content/probabilistic-programming-from-scratch/
+https://blog.fastforwardlabs.com/2017/01/11/thomas-wiecki-on-probabilistic-programming-with-pymc3.html
+
+```{r}
+n_visitors_a <- 100  # number of visitors shown layout A
+n_conv_a <- 4        # number of vistors shown layout A who converted
+
+n_visitors_b <- 40
+n_conv_b <- 2
+```
+
+```{r}
+
+
+
+posterior_sampler <- function(data, prior_sampler, simulate){
+  for (p in prior_sampler) {
+    if (simulate(p) == data) {
+      return(p)
+    }
+  }
+}
+
+#Effectively, this function runs a fake A/B test in which we already know the conversion fraction.
+simulate_conversion <- function(p, n_visitors){
+  random_numbers <- runif(n_visitors)
+  outcomes <- random_numbers < p
+  return(sum(outcomes))
+}
+
+uniform_prior_sampler <- function(){
+  return(runif(1))
+}
+
+c(simulate_conversion(0.1, 100), simulate_conversion(0.1, 100), simulate_conversion(0.1, 100))
+```
+
+```{r}
+
+def posterior_sampler(data, prior_sampler, simulate):
+    '''Yield samples from the posterior by Approximate Bayesian Computation.'''
+    for p in prior_sampler:
+        if simulate(p) == data:
+            yield p
+
+posterior_a_sampler <- posterior_sampler(
+    data=n_conv_a,
+    prior_sampler=uniform_prior_sampler(),
+    simulate=lambda p: simulate_conversion(p, n_visitors_a)
+)
+```
+
+```{r}
+library(nycflights13)
+library(tidyverse)
+library(lubridate)
+library(purrr)
+```
+
+```{r}
+
+model_through_time <- function(df){
+  mod <-lm(sum_air_time ~ date, data = df)
+  return(coef(mod)['date'][[1]])
+}
+
+slope <- function(x, y) cov(x, y) / var(x)
+
+state1 <-
+  flights %>% 
+  mutate(date = make_date(year, month, day)) %>% 
+  group_by(carrier, date) %>% 
+  summarise(sum_air_time = sum(air_time, na.rm = T)) %>% 
+  arrange(carrier, date) %>% 
+  group_by(carrier) %>% 
+  nest()
+
+test_d <- state1$data[[1]]
+
+t_m <- model_through_time(test_d)
+t_m[[1]]
+
+coef(model_through_time(test_d))
+
+test_d %>% 
+  mutate(row_n = row_number() + 1000,
+         test_m = row_n*3.430 
+         ) %>% 
+  ggplot() +
+  geom_point(aes(date, sum_air_time)) +
+  geom_smooth(aes(date, sum_air_time),method = 'lm') +
+  geom_line(aes(date, test_m))
+
+state1 %>%
+  mutate(mod = map(data, model_through_time)
+         ) %>% 
+  select(carrier, mod) %>% 
+  unnest()
+
+test_2<-
+  test_d %>% 
+  mutate(row_n = row_number() + 1000,
+         test_m = row_n*3.430 
+         ) 
+slope(test_2$row_n, test_2$sum_air_time)
+```
+
+```{r}
+t3 <-
+  flights %>% 
+  mutate(date = make_date(year, month, day)) %>% 
+  group_by(carrier, date) %>% 
+  summarise(sum_air_time = sum(air_time, na.rm = T)) %>% 
+  arrange(carrier, date) %>% 
+  ungroup()
+
+slope <- function(x, y) cov(x, y) / var(x)
+
+t3 %>% 
+  group_by(carrier) %>% 
+  mutate(row_n = row_number(),
+         # slope_test = slope(row_n, sum_air_time),
+         # cov_test = cov(row_n, sum_air_time),
+         # var_test = var(row_n)
+         ) %>% 
+  summarise(cov_test = cov(row_n, sum_air_time),
+            var_test = var(row_n),
+            t = cov_test/var_test,
+            slope_test = slope(row_n, sum_air_time),
+            slope_per_carrier = mean(slope_test, na.rm = T)
+            )
+
+```
+
+```{r}
+# Create data
+my_variable=rnorm(2000, 0 , 10)
+ 
+# Calculate histogram, but do not draw it
+my_hist=hist(my_variable , breaks=40  , plot=F)
+```
+
+```{r}
+my_hist
+```
+

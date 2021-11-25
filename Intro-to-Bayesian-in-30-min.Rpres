@@ -1,0 +1,349 @@
+Intro to Bayesian Topics in 30 min
+========================================================
+author: Krum Arnaudov
+date: 2021-11-20 (updated: `r Sys.Date()`)
+autosize: true
+incremental: false
+
+
+What's the Bayesian Hype About?
+========================================================
+<small>
+* **Rethinking of statistical ideas**:
+  * Use *probability* to describe uncertainty/risk
+  * Ability to incorporate institutional knowledge
+  * Increased modeling flexibility
+
+**+**
+* **Hardware and Software advances**:
+  * Faster CPUs
+  * Successes in moving computations to GPUs
+
+**+**
+* **Increasing industry success stories:**
+  * Facebook (time series forecasting)
+  * Uber (churn)
+  * Baker Hughes (preventive maintenance)</small>
+  
+Bayesian Data Analysis TLDR
+========================================================
+type: section
+<br/><br/>
+
+<span style="font-size:1.5em;">Count all the ways data can happen, according to assumptions.</span>
+
+<span style="font-size:1.5em;">Assumptions with more ways that are consistent with data are more plausible.</span>
+
+Sounds easy, eh?
+========================================================
+type: section
+
+Bayesian Terminology
+========================================================
+## Everything is a distribution!
+* Priors, Likelihoods and Posteriors. 
+  * Conjugate priors ??
+  * Updating ??
+
+## Monte Carlo Markov Chains
+* Chains !?
+
+## Some similar but different terms:
+* Credible Intervals
+* ROPE (Region of Practical Equivalence) - significance testing
+* PD (Probability of Direction)
+* Bayes Factor - hypothesis testing
+
+
+We want to know
+========================================================
+
+- How many visitors/clicks will we get out of a 100 shown adds.
+- Will we get more than 5 clicks/visitors?
+
+Let us simulate data
+========================================================
+
+```{r, echo = FALSE}
+set.seed(2021)
+```
+
+
+```{r}
+n_visitors <- rbinom(
+  # Simulate 100K times
+  n = 100000, 
+  # Number of total page views
+  size = 100,
+  # Probability of click
+  prob = 0.1 
+)
+
+mean(n_visitors > 5)
+```
+***
+```{r, echo=FALSE, fig.width=8,fig.height=4.5,dpi=300,out.width="1920px",out.height="1080px"}
+hist(n_visitors, 
+     xlab = 'Number of visitors',
+     main = 'Clicks out of 100 views',
+     breaks = 20,
+     col = rgb(1,0,0,0.5)
+     )
+```
+So Far
+========================================================
+
+* Represented uncertainty over future data with probability
+* Worked with samples
+
+========================================================
+
+```{r}
+n_visitors <- rbinom(
+  n = 100000, 
+  size = 100,
+  prob = 0.1 
+)
+
+mean(n_visitors > 5)
+```
+***
+```{r, echo=FALSE, fig.width=8,fig.height=4.5,dpi=300,out.width="1920px",out.height="1080px"}
+hist(n_visitors, 
+     xlab = 'Number of visitors',
+     main = 'Clicks out of 100 views',
+     breaks = 20,
+     col = rgb(1,0,0,0.5))
+```
+
+========================================================
+
+```{r}
+proportion_clicks <- runif(
+ n = 100000, 
+ min = 0.0, 
+ max = 0.2)
+```
+
+```{r}
+n_visitors <- rbinom(
+  n = 100000, 
+  size = 100,
+  prob = 0.1 
+)
+```
+
+***
+```{r, echo=FALSE, fig.width=5,fig.height=2.5,dpi=300}
+hist(proportion_clicks,
+     main = 'Uniform prior',
+     xlab = 'Underlying proportion of clicks'
+     )
+```
+
+```{r, echo=FALSE, fig.width=5,fig.height=2.5,dpi=300}
+hist(n_visitors, 
+     xlab = 'Number of visitors',
+     main = 'Clicks out of 100 views',
+     breaks = 20,
+     col = rgb(1,0,0,0.5))
+```
+
+========================================================
+
+```{r}
+proportion_clicks <- runif(
+ n = 100000, 
+ min = 0.0, 
+ max = 0.2)
+```
+
+```{r}
+n_visitors <- rbinom(
+  n = 100000, 
+  size = 100,
+  prob = proportion_clicks
+)
+```
+
+***
+```{r, echo=FALSE, fig.width=8,fig.height=4.5,dpi=300,out.width="1920px",out.height="1080px"}
+hist(proportion_clicks,
+     main = '',
+     xlab = 'Underlying proportion of clicks',
+     col = rgb(0,0,1,0.5)
+     )
+```
+
+```{r, echo=FALSE, fig.width=8,fig.height=4.5,dpi=300,out.width="1920px",out.height="1080px"}
+hist(n_visitors, 
+     xlab = 'Number of visitors',
+     main = 'Clicks out of 100 views',
+     breaks = 20,
+     col = rgb(1,0,0,0.5))
+```
+
+========================================================
+
+
+```{r}
+proportion_clicks <- runif(
+ n = 100000, 
+ min = 0.0, 
+ max = 0.2)
+```
+
+```{r, echo=FALSE}
+#proportion_clicks <- round(proportion_clicks, 2)
+```
+
+
+```{r}
+n_visitors <- rbinom(
+  n = 100000, 
+  size = 100,
+  prob = proportion_clicks 
+)
+```
+
+```{r}
+mean(n_visitors > 5)
+```
+
+
+***
+```{r, echo=FALSE, fig.width=8,fig.height=4.5,dpi=300,out.width="1920px",out.height="1080px"}
+hist(proportion_clicks,
+     main = '',
+     xlab = 'Underlying proportion of clicks',
+     col = rgb(0,0,1,0.5)
+     )
+```
+
+```{r, echo=FALSE, fig.width=8,fig.height=4.5,dpi=300,out.width="1920px",out.height="1080px"}
+hist(n_visitors, 
+     xlab = 'Number of visitors',
+     main = 'Clicks out of 100 views',
+     breaks = 20,
+     col = rgb(1,0,0,0.5))
+```
+
+So Far
+========================================================
+
+* Represented uncertainty over future data with probability
+* Worked with samples
+* Represented prior uncertainty over parameters with probability
+* Produced a prior predictive distribution over future data
+
+
+========================================================
+
+```{r}
+prior <- data.frame(n_visitors, proportion_clicks)
+```
+
+```{r}
+head(prior)
+```
+
+```{r eval = FALSE}
+plot(prior)
+```
+
+***
+```{r echo = FALSE}
+par(fig=c(0,0.8,0,0.8), new=TRUE)
+plot(prior, col='darkgreen', alpha = 0.1)
+par(fig=c(0,0.8,0.55,1), new=TRUE)
+hist(prior$n_visitors, main = '', ylab = '', xlab='', yaxt='n', xaxt = 'n',col = rgb(1,0,0,0.5))
+par(fig=c(0.65,1,0,0.8), new=TRUE)
+xhist <- hist(prior$proportion_clicks, plot=F)
+barplot(xhist$counts, horiz=TRUE, main = '', xlab='', yaxt='n', xaxt = 'n', col = rgb(0,0,1,0.5))
+```
+
+========================================================
+
+```{r echo = FALSE}
+prior_plot <- prior
+prior_plot$col <- as.factor(prior$proportion_clicks > 0.098 & prior$proportion_clicks < 0.102)
+par(fig=c(0,0.8,0,0.8), new=TRUE)
+plot(prior, col=c('gray', 'darkgreen')[prior_plot$col], alpha = 0.1)
+par(fig=c(0,0.8,0.55,1), new=TRUE)
+hist(prior$n_visitors[prior$proportion_clicks > 0.098 & prior$proportion_clicks < 0.102], main = '', ylab = '', xlab='', yaxt='n', xaxt = 'n',col = rgb(1,0,0,0.5))
+par(fig=c(0.65,1,0,0.8), new=TRUE)
+xhist <- hist(prior$proportion_clicks, plot=F)
+xhist$col <- as.factor(xhist$breaks == 0.1)
+barplot(xhist$counts, horiz=TRUE, main = '', xlab='', yaxt='n', xaxt = 'n', col = c( 'gray',rgb(0,0,1,0.5))[xhist$col])
+```
+
+
+========================================================
+
+```{r echo = FALSE}
+prior_plot <- prior
+prior_plot$col <- as.factor(prior$n_visitors == 10)
+par(fig=c(0,0.8,0,0.8), new=TRUE)
+plot(prior, col=c('gray', 'darkgreen')[prior_plot$col], alpha = 0.1)
+par(fig=c(0,0.8,0.55,1), new=TRUE)
+upper_hist <- hist(prior$n_visitors, plot=F)
+plot(upper_hist, main = '', ylab = '', xlab='', yaxt='n', xaxt = 'n', col = c('grey', rgb(1,0,0,0.5),'grey')[cut(upper_hist$breaks, c(-Inf,9.5,10.5, Inf))])
+par(fig=c(0.65,1,0,0.8), new=TRUE)
+xhist <- hist(prior$proportion_clicks[prior$n_visitors == 10], plot=F)
+barplot(xhist$counts, horiz=TRUE, main = '', xlab='', yaxt='n', xaxt = 'n', col = rgb(0,0,1,0.5))
+```
+
+========================================================
+
+```{r echo = FALSE}
+prior_plot <- prior
+prior_plot$col <- as.factor(prior$n_visitors == 13)
+par(fig=c(0,0.8,0,0.8), new=TRUE)
+plot(prior, col=c('gray', 'darkgreen')[prior_plot$col], alpha = 0.1)
+par(fig=c(0,0.8,0.55,1), new=TRUE)
+upper_hist <- hist(prior$n_visitors, plot=F)
+plot(upper_hist, main = '', ylab = '', xlab='', yaxt='n', xaxt = 'n', col = c('grey', rgb(1,0,0,0.5),'grey')[cut(upper_hist$breaks, c(-Inf,12,14, Inf))])
+par(fig=c(0.65,1,0,0.8), new=TRUE)
+xhist <- hist(prior$proportion_clicks[prior$n_visitors == 13], plot=F)
+barplot(xhist$counts, horiz=TRUE, main = '', xlab='', yaxt='n', xaxt = 'n', col = rgb(0,0,1,0.5))
+```
+
+========================================================
+
+```{r}
+prior <- data.frame(proportion_clicks, n_visitors)
+
+posterior <- prior[prior$n_visitors ==13, ]
+```
+
+```{r eval=FALSE}
+hist(posterior$proportion_clicks)
+```
+
+```{r}
+n_visitors <- rbinom(
+ n = 100000,
+ size = 100,
+ prob = posterior$proportion_clicks)
+
+mean(n_visitors > 5)
+```
+
+***
+```{r echo=FALSE, fig.width=8,fig.height=4.5,dpi=300,out.width="1920px",out.height="1080px"}
+hist(posterior$proportion_clicks)
+```
+
+```{r echo=FALSE, fig.width=8,fig.height=4.5,dpi=300,out.width="1920px",out.height="1080px"}
+hist(n_visitors)
+```
+
+So Far
+========================================================
+
+* Represented uncertainty over future data with probability
+* Worked with samples
+* Represented prior uncertainty over parameters with probability
+* Produced a prior predictive distribution over future data
+* Bayesian inference by conditioning on the data
+* Produced a posterior predictive distribution

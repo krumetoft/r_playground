@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="" xml:lang="">
+  <head>
+    <title>30 min Intro to Bayesian Data Science</title>
+    <meta charset="utf-8" />
+    <meta name="author" content="Krum Arnaudov   (strongly inspired by Rasmus Bååth and others)" />
+    <script src="libs/header-attrs-2.9/header-attrs.js"></script>
+    <link href="libs/remark-css-0.0.1/default.css" rel="stylesheet" />
+    <link href="libs/remark-css-0.0.1/default-fonts.css" rel="stylesheet" />
+  </head>
+  <body>
+    <textarea id="source">
+class: center, top, title-slide
+
+# 30 min Intro to Bayesian Data Science
+## slides with xaringan
+### Krum Arnaudov <br/> (strongly inspired by Rasmus Bååth and others)
+### Financial Times
+### 2021-11-20 (updated: 2021-11-23)
+
+---
+
+## What's the Bayesian Hype About?
+--
+
+* **Rethinking of statistical ideas**:
+  * Use *probability* to describe uncertainty/risk
+  * Ability to incorporate institutional knowledge
+  * Increased modeling flexibility
+--
+
+
+**+**
+
+* **Hardware and Software advances**:
+  * Faster CPUs
+  * Successes in moving computations to GPUs
+  * Established Probabilistic Languages (Stan, PyMC3 and others)
+--
+
+
+**+**
+
+* **Increasing industry success stories:**
+  * Facebook (time series forecasting)
+  * Uber (churn)
+  * Baker Hughes (preventive maintenance)
+  * A/B Tests
+  * Sports Analytics
+  * Healthcare industry
+
+--
+
+### Probabilistic Revolution in ML? Probably!
+
+---
+## Disadvantages of Probabilistic Models
+&lt;br/&gt;&lt;br/&gt;
+* Very slow (still) vs. traditional ML.
+  * Try running Prophet with mcmc_samples = 1000 vs. the default.
+* More skill-intensive vs. traditional ML.
+* Trickier to deploy (but getting there).
+
+
+---
+
+
+## When to use Probabilistic Models
+&lt;br/&gt;&lt;br/&gt;
+
+--
+
+### The sweet spots are:
+* When **risk/uncertainty estimation** is crucial.
+* When **insights** are more important than prediction.
+* When data is relatively **small** or model runtime is not very important.
+
+---
+## Bayesian Data Analysis TLDR
+
+&lt;br/&gt;&lt;br/&gt;
+
+&lt;span style="font-size:1.5em;"&gt;State your assumptions. Get data. Count all the ways data can happen, according to assumptions.&lt;/span&gt;
+
+&lt;span style="font-size:1.5em;"&gt;Assumptions with more ways that are consistent with data are more plausible.&lt;/span&gt;
+
+---
+![Procedures](images/procedures.png)
+
+
+---
+## Bayesian Terminology
+
+--
+
+### Everything is a [distribution!](https://seeing-theory.brown.edu/probability-distributions/index.html)
+* Priors, Likelihoods and Posteriors. 
+  * Conjugate?! priors
+  * Bayesian Updating!?
+
+--
+
+### Monte Carlo Markov Chains (MCMC)
+* The BBB (Bayesian Black Box)
+* If you know backpropagation, you know the main idea.
+
+--
+
+### Some similar but different terms:
+* Credible Intervals
+* ROPE (Region of Practical Equivalence) - significance testing
+* PD (Probability of Direction)
+* Bayes Factor - hypothesis testing
+* Maximum a posteriori probability (MAP) estimate (known as the mode, kind of like Maximum Likelihood)
+---
+## Bayesian Data Analysis - Modeling
+
+&lt;span style="font-size:1.5em;"&gt; Main task - describe the world in probability distributions.&lt;/span&gt;
+
+--
+
+**↓**
+
+&lt;span style="font-size:1.5em;"&gt;Two inputs: beliefs/assumptions before we get some new data, and the data.&lt;/span&gt;
+
+--
+
+**↓**
+
+&lt;span style="font-size:1.5em;"&gt;Go into a BBB (Bayesian Black Box).&lt;/span&gt;
+
+--
+
+**↓**
+
+&lt;span style="font-size:1.5em;"&gt;Returns Revised Beliefs that incorporate what we know before we got the data + the data.&lt;/span&gt;
+
+
+---
+
+## Probability languages - Stan &amp; Rstan &amp; PyMC3 
+
+### Provide a library of what's needed:
+
+--
+
+* Random variables and probability distributions that you can compose together to describe your problem.
+* Well designed, fast implementations of Bayesian Black Box (Monte Carlo Markov Chains).
+
+
+--
+&lt;br/&gt;
+&lt;br/&gt;
+### Your main job is to describe the world well and push a button
+
+
+---
+## Stan code example (C++ under the hood)
+![Stan Code](images/stan.png)
+---
+## Same code in brms (R interface to Stan)
+![RCode](images/brms.png)
+
+
+
+
+---
+class: inverse, center, middle
+
+# Example time - Ads Analytics
+---
+&lt;br/&gt;
+## We are a small local wine-focused media - *Fermentation Times*
+## We want to advertise on the Metabook social media
+## We want to know:
+1) How many visitors/clicks will we get out of a 100 shown adds.
+
+2) Will we get more than 5 clicks/visitors?
+---
+class: middle, center
+# Metabook's claim - We should expect 10% click rate.
+---
+class: middle, center
+# A function simulating people clicking on 100 ads with an underlying rate of 10%?
+--
+
+# Binomial Distribution
+---
+
+# Let us simulate data
+
+
+
+.pull-left[
+
+```r
+n_visitors &lt;- rbinom(
+  # Simulate 100K times
+  n = 100000, 
+  # Number of ads
+  size = 100,
+  # Probability of click
+  prob = 0.1 
+)
+
+mean(n_visitors &gt; 5)
+```
+
+```
+## [1] 0.94224
+```
+]
+
+.pull-right[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-3-1.png)&lt;!-- --&gt;
+]
+
+---
+## So far
+* Represented uncertainty over future data with probability
+* Worked with samples
+---
+
+## Simulation model
+
+
+.pull-left[
+
+```r
+n_visitors &lt;- rbinom(
+  # Simulate 100K times
+  n = 100000, 
+  # Number of total ads views
+  size = 100,
+  # Probability of click
+  prob = 0.1 
+)
+
+mean(n_visitors &gt; 5)
+```
+
+```
+## [1] 0.94224
+```
+]
+
+.pull-right[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-6-1.png)&lt;!-- --&gt;
+]
+---
+## Simulation model + Prior
+
+
+.pull-left[
+
+```r
+proportion_clicks &lt;- runif(
+  n = 100000, 
+  min = 0.0, 
+  max = 0.2
+ )
+```
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+
+```r
+n_visitors &lt;- rbinom(
+  n = 100000, 
+  size = 100,
+  prob = 0.1 
+)
+```
+]
+
+.pull-right[
+.small[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-10-1.png)&lt;!-- --&gt;
+
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-11-1.png)&lt;!-- --&gt;
+]
+]
+
+---
+## Simulation model + Prior
+
+
+.pull-left[
+
+```r
+proportion_clicks &lt;- runif(
+  n = 100000, 
+  min = 0.0, 
+  max = 0.2
+ )
+```
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+
+```r
+n_visitors &lt;- rbinom(
+  n = 100000, 
+  size = 100,
+  prob = proportion_clicks 
+)
+```
+]
+
+.pull-right[
+.small[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-15-1.png)&lt;!-- --&gt;
+
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-16-1.png)&lt;!-- --&gt;
+]
+]
+
+---
+## Simulation model + Prior = Prior Predictive Distribution
+
+
+.pull-left[
+
+```r
+proportion_clicks &lt;- runif(
+  n = 100000, 
+  min = 0.0, 
+  max = 0.2
+ )
+```
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+
+```r
+n_visitors &lt;- rbinom(
+  n = 100000, 
+  size = 100,
+  prob = proportion_clicks 
+)
+```
+]
+
+.pull-right[
+.small[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-20-1.png)&lt;!-- --&gt;
+
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-21-1.png)&lt;!-- --&gt;
+]
+]
+
+---
+## Simulation model + Prior = Prior Predictive Distribution
+
+
+.pull-left[
+
+```r
+proportion_clicks &lt;- runif(
+  n = 100000, 
+  min = 0.0, 
+  max = 0.2
+ )
+```
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+&lt;br/&gt;
+
+```r
+n_visitors &lt;- rbinom(
+  n = 100000, 
+  size = 100,
+  prob = proportion_clicks 
+)
+
+mean(n_visitors &gt; 5)
+```
+
+```
+## [1] 0.70186
+```
+]
+
+.pull-right[
+.small[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-25-1.png)&lt;!-- --&gt;
+
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-26-1.png)&lt;!-- --&gt;
+]
+]
+---
+
+# So Far
+
+* &lt;span style="color:gray"&gt;Represented uncertainty over future data with probability&lt;/span&gt;
+* &lt;span style="color:gray"&gt;Worked with samples&lt;/span&gt;
+* Represented prior uncertainty over parameters with probability
+* Produced a prior predictive distribution over future data
+
+---
+class: middle, center
+# No data yet - all results so far are based on prior information.
+---
+class: middle, center
+# We finally decide to run 100 ads.
+---
+class: middle, center
+# Bang! 
+# 13 clicks out of 100 ads!
+---
+class: middle, center
+# Bang!
+# We got data now!
+---
+class: middle, center
+# Now - just condition on the data.
+---
+class: middle, center
+# Or plainly said - count the points that are consistent with the data.
+---
+## Conditioning on the data
+
+
+.pull-left[
+
+```r
+prior &lt;- 
+  data.frame(
+    n_visitors, 
+    proportion_clicks
+  )
+```
+
+
+```r
+head(prior)
+```
+
+```
+##   n_visitors proportion_clicks
+## 1          7        0.09025347
+## 2         16        0.15675596
+## 3         12        0.14193645
+## 4          7        0.07634885
+## 5         10        0.12726475
+## 6         10        0.14026920
+```
+
+
+```r
+plot(prior)
+```
+]
+
+.pull-right[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-31-1.png)&lt;!-- --&gt;
+]
+
+---
+## Conditioning on the data
+
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-32-1.png)&lt;!-- --&gt;
+
+
+---
+## Probability of click = 10%
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-33-1.png)&lt;!-- --&gt;
+
+
+
+---
+## Probability of click = 13%
+
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-34-1.png)&lt;!-- --&gt;
+
+---
+class: middle, center
+# But that is not what we want! 
+# We do not know what the proportion of clicks is!
+---
+class: middle, center
+# We just know the data
+# 13/100 clicks
+---
+## Conditioning on data - 13/100 clicks
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-35-1.png)&lt;!-- --&gt;
+
+---
+
+
+## Conditioning on data - 4/100 clicks
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-36-1.png)&lt;!-- --&gt;
+
+---
+## The same in R code
+.pull-left[
+
+```r
+prior &lt;- 
+  data.frame(
+    proportion_clicks, 
+    n_visitors)
+
+posterior &lt;- 
+  prior[prior$n_visitors ==13,]
+```
+
+
+```r
+hist(posterior$proportion_clicks)
+```
+
+]
+.pull-right[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-39-1.png)&lt;!-- --&gt;
+
+]
+
+
+---
+## Posterior to Predictive Posterior Distribution
+.pull-left[
+
+```r
+prior &lt;- 
+  data.frame(
+    proportion_clicks, 
+    n_visitors)
+
+posterior &lt;- 
+  prior[prior$n_visitors ==13,]
+```
+
+
+```r
+hist(posterior$proportion_clicks)
+```
+
+
+```r
+n_visitors_posterior_pred &lt;- 
+  rbinom(
+    n = 100000,
+    size = 100,
+    prob = posterior$proportion_clicks
+    )
+```
+]
+.pull-right[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-43-1.png)&lt;!-- --&gt;
+
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-44-1.png)&lt;!-- --&gt;
+]
+
+
+
+---
+## Predictive Posterior Distribution
+.pull-left[
+
+```r
+prior &lt;- data.frame(
+  proportion_clicks, 
+  n_visitors)
+
+posterior &lt;- 
+  prior[prior$n_visitors ==13,]
+```
+
+
+```r
+hist(posterior$proportion_clicks)
+```
+
+
+```r
+n_visitors_posterior_pred &lt;- 
+  rbinom(
+    n = 100000,
+    size = 100,
+    prob = posterior$proportion_clicks
+    )
+```
+
+
+```r
+mean(n_visitors_posterior_pred &gt; 5)
+```
+
+```
+## [1] 0.97152
+```
+
+]
+.pull-right[
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-49-1.png)&lt;!-- --&gt;
+
+![](Intro-to-Bayesian-Data-Science_files/figure-html/unnamed-chunk-50-1.png)&lt;!-- --&gt;
+]
+
+---
+![Summary](images/summary.png)
+---
+
+# So Far
+
+* &lt;span style="color:gray"&gt;Represented uncertainty over future data with probability&lt;/span&gt;
+* &lt;span style="color:gray"&gt;Worked with samples&lt;/span&gt;
+* &lt;span style="color:gray"&gt;Represented prior uncertainty over parameters with probability&lt;/span&gt;
+* &lt;span style="color:gray"&gt;Produced a prior predictive distribution over future data&lt;/span&gt;
+* Bayesian inference by conditioning on the data
+* Produced a posterior predictive distribution
+
+---
+# In Summary
+
+## Probabilistic Models are coming and they are great:
+* Especially when optimizing for insights and uncertainty estimation.
+* Best with small-ish data.
+* Improving tools in R &amp; Python + Stan.
+* Still rather slow, though.
+
+--
+
+## Probabilistic Models require statistical rethinking:
+* Everything is a distribution.
+* Describe (at least try to) the world, rather than just estimate/optimize your way.
+* New terms, but less procedures overall.
+* More work for the model builder, but worth it.
+
+
+
+---
+# Resources:
+
+#### Start with Statistical Rethinking, Richard McElReath
+* [Book, code and lectures in R and Stan](https://xcelab.net/rm/statistical-rethinking/)
+* [Amazing companion in brms+tidyverse by S.Kurz](https://bookdown.org/content/4857/)
+
+#### Regression and Other Stories, A. Gelman, J. Hill and A. Vehtari:
+* [The book examples are in R](https://avehtari.github.io/ROS-Examples/examples.html)
+* [Aki Vehtari's course](https://www.youtube.com/watch?v=AcKRob0C8EY&amp;list=PLBqnAso5Dy7O0IVoVn2b-WtetXQk5CDk6&amp;ab_channel=AkiVehtari) follows the book.
+
+#### Shorter video lectures:
+- Richard McElreath - [Bayesian Inference is Just Counting](https://www.youtube.com/watch?v=_NEMHM1wDfI&amp;t=2802s&amp;ab_channel=RichardMcElreath)
+- Rasmus Baath - [Introducing Bayes - the basis for this talk](https://www.youtube.com/watch?v=Rvbs9OB2pa0&amp;ab_channel=rasmusab)
+- Paul-Christian Buerkner - [Why not to be afraid of prios (too much)](https://www.youtube.com/watch?v=Uz9r8eV2erQ&amp;ab_channel=rasmusab)
+
+#### Good blogposts and tutorials:
+- [Easy R intro with bayestestR](https://easystats.github.io/bayestestR/articles/example1.html)
+- [Nice post comparing frequentist to bayesian regression](http://haines-lab.com/post/on-the-equivalency-between-the-lasso-ridge-regression-and-specific-bayesian-priors/)
+- [Sebastian Kurz blog - Every word of it!](https://solomonkurz.netlify.app/post/)
+- [David Robinson's series of posts on baseball and Bayes](http://varianceexplained.org/statistics/beta_distribution_and_baseball/)
+
+
+
+
+    </textarea>
+<style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
+<script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
+<script>var slideshow = remark.create({
+"highlightStyle": "tomorrow-night-bright",
+"highlightLines": true,
+"countIncrementalSlides": false
+});
+if (window.HTMLWidgets) slideshow.on('afterShowSlide', function (slide) {
+  window.dispatchEvent(new Event('resize'));
+});
+(function(d) {
+  var s = d.createElement("style"), r = d.querySelector(".remark-slide-scaler");
+  if (!r) return;
+  s.type = "text/css"; s.innerHTML = "@page {size: " + r.style.width + " " + r.style.height +"; }";
+  d.head.appendChild(s);
+})(document);
+
+(function(d) {
+  var el = d.getElementsByClassName("remark-slides-area");
+  if (!el) return;
+  var slide, slides = slideshow.getSlides(), els = el[0].children;
+  for (var i = 1; i < slides.length; i++) {
+    slide = slides[i];
+    if (slide.properties.continued === "true" || slide.properties.count === "false") {
+      els[i - 1].className += ' has-continuation';
+    }
+  }
+  var s = d.createElement("style");
+  s.type = "text/css"; s.innerHTML = "@media print { .has-continuation { display: none; } }";
+  d.head.appendChild(s);
+})(document);
+// delete the temporary CSS (for displaying all slides initially) when the user
+// starts to view slides
+(function() {
+  var deleted = false;
+  slideshow.on('beforeShowSlide', function(slide) {
+    if (deleted) return;
+    var sheets = document.styleSheets, node;
+    for (var i = 0; i < sheets.length; i++) {
+      node = sheets[i].ownerNode;
+      if (node.dataset["target"] !== "print-only") continue;
+      node.parentNode.removeChild(node);
+    }
+    deleted = true;
+  });
+})();
+(function() {
+  "use strict"
+  // Replace <script> tags in slides area to make them executable
+  var scripts = document.querySelectorAll(
+    '.remark-slides-area .remark-slide-container script'
+  );
+  if (!scripts.length) return;
+  for (var i = 0; i < scripts.length; i++) {
+    var s = document.createElement('script');
+    var code = document.createTextNode(scripts[i].textContent);
+    s.appendChild(code);
+    var scriptAttrs = scripts[i].attributes;
+    for (var j = 0; j < scriptAttrs.length; j++) {
+      s.setAttribute(scriptAttrs[j].name, scriptAttrs[j].value);
+    }
+    scripts[i].parentElement.replaceChild(s, scripts[i]);
+  }
+})();
+(function() {
+  var links = document.getElementsByTagName('a');
+  for (var i = 0; i < links.length; i++) {
+    if (/^(https?:)?\/\//.test(links[i].getAttribute('href'))) {
+      links[i].target = '_blank';
+    }
+  }
+})();
+// adds .remark-code-has-line-highlighted class to <pre> parent elements
+// of code chunks containing highlighted lines with class .remark-code-line-highlighted
+(function(d) {
+  const hlines = d.querySelectorAll('.remark-code-line-highlighted');
+  const preParents = [];
+  const findPreParent = function(line, p = 0) {
+    if (p > 1) return null; // traverse up no further than grandparent
+    const el = line.parentElement;
+    return el.tagName === "PRE" ? el : findPreParent(el, ++p);
+  };
+
+  for (let line of hlines) {
+    let pre = findPreParent(line);
+    if (pre && !preParents.includes(pre)) preParents.push(pre);
+  }
+  preParents.forEach(p => p.classList.add("remark-code-has-line-highlighted"));
+})(document);</script>
+
+<script>
+slideshow._releaseMath = function(el) {
+  var i, text, code, codes = el.getElementsByTagName('code');
+  for (i = 0; i < codes.length;) {
+    code = codes[i];
+    if (code.parentNode.tagName !== 'PRE' && code.childElementCount === 0) {
+      text = code.textContent;
+      if (/^\\\((.|\s)+\\\)$/.test(text) || /^\\\[(.|\s)+\\\]$/.test(text) ||
+          /^\$\$(.|\s)+\$\$$/.test(text) ||
+          /^\\begin\{([^}]+)\}(.|\s)+\\end\{[^}]+\}$/.test(text)) {
+        code.outerHTML = code.innerHTML;  // remove <code></code>
+        continue;
+      }
+    }
+    i++;
+  }
+};
+slideshow._releaseMath(document);
+</script>
+<!-- dynamically load mathjax for compatibility with self-contained -->
+<script>
+(function () {
+  var script = document.createElement('script');
+  script.type = 'text/javascript';
+  script.src  = 'https://mathjax.rstudio.com/latest/MathJax.js?config=TeX-MML-AM_CHTML';
+  if (location.protocol !== 'file:' && /^https?:/.test(script.src))
+    script.src  = script.src.replace(/^https?:/, '');
+  document.getElementsByTagName('head')[0].appendChild(script);
+})();
+</script>
+  </body>
+</html>
